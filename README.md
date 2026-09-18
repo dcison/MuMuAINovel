@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.5.4-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-green.svg)
 ![React](https://img.shields.io/badge/react-18.3.1-blue.svg)
@@ -14,53 +14,10 @@
 
 </div>
 
----
-
-<div align="center">
-
-## 💬 加入交流群
-
-欢迎扫码加入 QQ 交流群，一起交流 AI 小说创作心得、反馈问题、获取最新动态！
-
-<img src="frontend/public/qq.jpg" alt="QQ交流群二维码" width="300" />
-
-</div>
-
----
-
-<div align="center">
-
-## 💖 支持项目
-
-如果这个项目对你有帮助，欢迎通过以下方式支持开发：
-
-**[☕ 请我喝杯咖啡](https://mumuverse.space:1588/)**
-
-**[🌐 MuMuのAPI站点](https://api.mumuverse.space/register?aff=4NN8)**
-
-> 在 MuMu の API 站点充值满 50 元及以上，也可以获得下方赞助专属权益。
-
-### 🎁 赞助专属权益
-
-| 权益 | 说明 |
-|------|------|
-| 📋 **优先需求响应** | 您的功能需求和问题反馈将获得优先处理 |
-| 🚀 **Windows一键启动** | 获取免安装 EXE 程序，双击即可使用 |
-| 💬 **专属技术支持** | 加入赞助者内部群，获得远程协助和配置指导 |
-
-### ☕ 赞助 / API 站点充值档位
-
-| 金额 | 描述 |
-|------|------|
-| ¥5 | 🌶️ 一包辣条 |
-| ¥10 | 🍱 一顿拼好饭 |
-| ¥20 | ☕ 一杯咖啡 |
-| ¥50 | 🍖 一次烧烤  |
-| ¥99 | 🍲 一顿海底捞 |
-
-您的支持是我持续开发的动力！🙏
-
-</div>
+> **🔱 本仓库为 Fork**
+>
+> 本项目 fork 自 [xiamuceer-j/MuMuAINovel](https://github.com/xiamuceer-j/MuMuAINovel)，在原项目基础上进行了修改。
+>
 
 ---
 
@@ -98,11 +55,6 @@
 
 ![项目管理](images/3-1.png)
 
-### 赞助我 💖
-![赞助我](images/4.png)
-
-![赞助我](images/4-1.png)
-
 </div>
 
 </details>
@@ -129,7 +81,7 @@
 
 ......
 
-> 💡 欢迎提交 Issue 或 Pull Request！
+> 💡 欢迎提交 [Issue](https://github.com/dcison/MuMuAINovel/issues) 或 Pull Request！
 
 ## 💻 硬件配置要求
 
@@ -177,7 +129,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/xiamuceer-j/MuMuAINovel.git
+git clone https://github.com/dcison/MuMuAINovel.git
 cd MuMuAINovel
 
 # 2. 配置环境变量（必需）
@@ -200,7 +152,7 @@ docker-compose up -d
 >
 > 1. **`.env` 文件挂载**: `docker-compose.yml` 会自动将 `.env` 挂载到容器，确保文件存在
 > 2. **数据库初始化**: `init_postgres.sql` 会在首次启动时自动执行，安装必要的PostgreSQL扩展
-> 3. **自行构建**: 如需从源码构建，请先下载 embedding 模型文件（[加群获取](frontend/public/qq.jpg)）
+> 3. **自行构建**: 如需从源码构建，请先下载 embedding 模型文件（获取方式见下方[本地开发](#-本地开发--从源码构建)）
 
 ### 使用 Docker Hub 镜像（推荐新手）
 
@@ -372,9 +324,7 @@ docker-compose up -d
 # backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/
 #
 # 📥 获取方式：
-# - 加入项目 QQ 群或 Linux DO 讨论区获取下载链接
-# - 群号：见项目主页
-# - Linux DO：https://linux.do/t/topic/1100112
+# - 从 Hugging Face 等渠道下载该模型，或复用 Docker Hub 镜像中的模型文件
 ```
 
 #### 后端
@@ -595,14 +545,6 @@ MuMuAINovel/
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 提交 Pull Request
 
-### 贡献者
-
-感谢所有为本项目做出贡献的开发者！
-
-<a href="https://github.com/xiamuceer-j/MuMuAINovel/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=xiamuceer-j/MuMuAINovel" />
-</a>
-
 ## 📝 许可证
 
 本项目采用 [GNU General Public License v3.0](LICENSE)
@@ -623,10 +565,7 @@ MuMuAINovel/
 
 ## 📧 联系方式
 
-- 提交 [Issue](https://github.com/xiamuceer-j/MuMuAINovel/issues)
-- Linux DO [讨论](https://linux.do/t/topic/1106333)
-- 加入QQ群 [QQ群](frontend/public/qq.jpg)
-- 加入WX群 [WX群](frontend/public/WX.png)
+- 提交 [Issue](https://github.com/dcison/MuMuAINovel/issues)
 
 ---
 
@@ -634,20 +573,5 @@ MuMuAINovel/
 
 **如果这个项目对你有帮助，请给个 ⭐️ Star！**
 
-Made with ❤️
-
 </div>
 
-## Star History
-
-<a href="https://www.star-history.com/#xiamuceer-j/MuMuAINovel&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=xiamuceer-j/MuMuAINovel&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=xiamuceer-j/MuMuAINovel&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=xiamuceer-j/MuMuAINovel&type=date&legend=top-left" />
- </picture>
-</a>
-
-## History
-
-![Alt](https://repobeats.axiom.co/api/embed/ee7141a5f269c64759302e067abe23b46796bafe.svg "Repobeats analytics image")

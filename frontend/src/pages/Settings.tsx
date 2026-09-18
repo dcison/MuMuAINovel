@@ -1456,7 +1456,7 @@ export default function SettingsPage() {
                             name="max_tokens"
                             rules={[
                               { required: true, message: '请输入最大token数' },
-                              { type: 'number', min: 1, message: '请输入大于0的数字' }
+                              { type: 'number', min: 1, message: '请输入大于0的数字' },
                             ]}
                           >
                             <InputNumber
@@ -2047,7 +2047,6 @@ export default function SettingsPage() {
                 >
                   <InputNumber
                     min={1}
-                    max={100000}
                     style={{ width: '100%' }}
                     placeholder="32000"
                   />
