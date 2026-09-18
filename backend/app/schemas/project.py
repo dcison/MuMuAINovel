@@ -35,6 +35,10 @@ class ProjectUpdate(BaseModel):
     world_location: Optional[str] = None
     world_atmosphere: Optional[str] = None
     world_rules: Optional[str] = None
+    world_climate: Optional[str] = None
+    world_clothing: Optional[str] = None
+    world_climate: Optional[str] = None
+    world_clothing: Optional[str] = None
     chapter_count: Optional[int] = None
     narrative_perspective: Optional[str] = None
     character_count: Optional[int] = None
@@ -52,6 +56,10 @@ class ProjectResponse(ProjectBase):
     world_location: Optional[str] = None
     world_atmosphere: Optional[str] = None
     world_rules: Optional[str] = None
+    world_climate: Optional[str] = None
+    world_clothing: Optional[str] = None
+    world_climate: Optional[str] = None
+    world_clothing: Optional[str] = None
     chapter_count: Optional[int] = None
     narrative_perspective: Optional[str] = None
     character_count: Optional[int] = None

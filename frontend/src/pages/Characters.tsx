@@ -323,9 +323,22 @@ export default function Characters() {
     if (!editingCharacter) return;
 
     try {
-      // 提取副职业数据，剩余的作为更新数据
-      const { sub_career_data: subCareerData, ...restValues } = values;
+      // 提取副职业数据和主职业ID
+      const { sub_career_data: subCareerData, main_career_id, main_career_stage, ...restValues } = values;
       const updateData: CharacterUpdateData = { ...restValues };
+
+      // 处理主职业清除：当值为 undefined/null/空字符串时，显式设置为空字符串
+      // 后端使用 exclude_unset=True，undefined 会被忽略，空字符串才能触发清除逻辑
+      if (main_career_id === undefined || main_career_id === null) {
+        updateData.main_career_id = '';
+      } else {
+        updateData.main_career_id = main_career_id;
+      }
+
+      // 处理主职业阶段
+      if (main_career_stage !== undefined) {
+        updateData.main_career_stage = main_career_stage;
+      }
 
       // 转换为sub_careers格式
       if (subCareerData && Array.isArray(subCareerData) && subCareerData.length > 0) {

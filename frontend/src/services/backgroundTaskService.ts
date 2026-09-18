@@ -254,15 +254,36 @@ export async function generateChapterBackground(
     model?: string | null;
     narrative_perspective?: string | null;
     enable_mcp?: boolean;
+    reference_chapter_ids?: string[];
+    reference_foreshadow_ids?: string[];
+    auto_analysis?: boolean;
+    auto_create_foreshadow?: boolean;
   },
   onProgress: TaskProgressCallback,
   onComplete: TaskCompleteCallback,
   onError: TaskErrorCallback
 ): Promise<() => void> {
+  const body: Record<string, unknown> = {
+    style_id: options.style_id,
+    target_word_count: options.target_word_count,
+    model: options.model,
+    narrative_perspective: options.narrative_perspective,
+    enable_mcp: options.enable_mcp,
+    auto_analysis: options.auto_analysis ?? true,
+    auto_create_foreshadow: options.auto_create_foreshadow ?? true,
+  };
+  // 全选时不传 reference_chapter_ids / reference_foreshadow_ids（后端自动使用全部）
+  if (options.reference_chapter_ids && options.reference_chapter_ids.length > 0) {
+    body.reference_chapter_ids = options.reference_chapter_ids;
+  }
+  if (options.reference_foreshadow_ids && options.reference_foreshadow_ids.length > 0) {
+    body.reference_foreshadow_ids = options.reference_foreshadow_ids;
+  }
+
   const response = await fetch(`/api/chapters/${chapterId}/generate-background`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(options),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

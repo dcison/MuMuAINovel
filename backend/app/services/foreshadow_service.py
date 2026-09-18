@@ -1248,8 +1248,10 @@ class ForeshadowService:
         project_id: str,
         chapter_id: str,
         chapter_number: int,
-        analysis_foreshadows: List[Dict[str, Any]]
+        analysis_foreshadows: List[Dict[str, Any]],
+        auto_create_foreshadow: bool = True
     ) -> Dict[str, Any]:
+        logger.info(f"🔮 [DEBUG] auto_update_from_analysis: chapter_number={chapter_number}, auto_create_foreshadow={auto_create_foreshadow}, foreshadows_count={len(analysis_foreshadows)}")
         """
         根据章节分析结果自动更新伏笔状态
         
@@ -1418,6 +1420,11 @@ class ForeshadowService:
                             await db.flush()
                             stats["updated_ids"].append(existing_fs.id)
                             logger.info(f"📝 更新已存在伏笔（避免重复）: {fs_title} (ID: {existing_fs.id})")
+                        elif not auto_create_foreshadow:
+                            # 不自动创建新伏笔
+                            logger.info(f"⏭️ 跳过自动创建伏笔（auto_create_foreshadow=False）: {fs_title}")
+                            stats["skipped_create_count"] = stats.get("skipped_create_count", 0) + 1
+                            continue
                         else:
                             # 创建新伏笔
                             # 检查每章新伏笔数量上限

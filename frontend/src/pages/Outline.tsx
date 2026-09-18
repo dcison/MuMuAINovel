@@ -7,7 +7,8 @@ import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskServ
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
-import type { ApiError, Character } from '../types';
+import type { ApiError, Character, ExpansionPlanData } from '../types';
+import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
 
 // 大纲生成请求数据类型
 interface OutlineGenerateRequestData {
@@ -126,6 +127,12 @@ export default function Outline() {
 
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
+
+  // 章纲编辑状态
+  const [editPlanVisible, setEditPlanVisible] = useState(false);
+  const [editPlanChapterId, setEditPlanChapterId] = useState<string | null>(null);
+  const [editPlanData, setEditPlanData] = useState<ExpansionPlanData | null>(null);
+  const [editPlanSummary, setEditPlanSummary] = useState<string>('');
 
   useEffect(() => {
     const handleResize = () => {
@@ -1078,6 +1085,25 @@ export default function Outline() {
     }
   };
 
+  // 保存章纲（复用 PUT /chapters/{id}/expansion-plan）
+  const handleSaveExpansionPlan = async (planData: ExpansionPlanData & { summary?: string }) => {
+    if (!editPlanChapterId) return;
+    try {
+      await chapterApi.updateExpansionPlan(editPlanChapterId, planData);
+      message.success('章纲更新成功');
+      setEditPlanVisible(false);
+      setEditPlanChapterId(null);
+      setEditPlanData(null);
+      setEditPlanSummary('');
+      // 关闭预览弹窗，让用户重新打开以看到最新章纲
+      Modal.destroyAll();
+    } catch (error: unknown) {
+      const err = error as Error;
+      message.error('保存章纲失败：' + (err?.message || '未知错误'));
+      throw error;
+    }
+  };
+
   // 显示已存在章节的展开规划
   const showExistingExpansionPreview = (
     outlineTitle: string,
@@ -1329,6 +1355,32 @@ export default function Outline() {
                       </Card>
                     )
                     }
+                    <Button
+                      type="primary"
+                      icon={<EditOutlined />}
+                      block
+                      onClick={() => {
+                        const ch = data.chapters?.[idx];
+                        if (!ch) {
+                          message.warning('未找到对应的章节');
+                          return;
+                        }
+                        setEditPlanChapterId(ch.id);
+                        setEditPlanSummary(plan.plot_summary || '');
+                        setEditPlanData({
+                          key_events: plan.key_events || [],
+                          character_focus: plan.character_focus || [],
+                          emotional_tone: plan.emotional_tone || '',
+                          narrative_goal: plan.narrative_goal || '',
+                          conflict_type: plan.conflict_type || '',
+                          estimated_words: plan.estimated_words || 0,
+                          scenes: plan.scenes || null,
+                        });
+                        setEditPlanVisible(true);
+                      }}
+                    >
+                      编辑章纲
+                    </Button>
                   </Space>
                 </div >
               )
@@ -2335,6 +2387,21 @@ export default function Outline() {
           </div>
         )}
       </div>
+
+      {/* 章纲编辑弹窗 */}
+      <ExpansionPlanEditor
+        visible={editPlanVisible}
+        planData={editPlanData}
+        chapterSummary={editPlanSummary}
+        projectId={currentProject?.id || ''}
+        onSave={handleSaveExpansionPlan}
+        onCancel={() => {
+          setEditPlanVisible(false);
+          setEditPlanChapterId(null);
+          setEditPlanData(null);
+          setEditPlanSummary('');
+        }}
+      />
     </>
   );
 }

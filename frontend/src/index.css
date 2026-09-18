@@ -149,7 +149,7 @@ body {
     height: 4px;
   }
 
-  button,
+  button:not(.ant-input-search-button),
   a,
   [role='button'] {
     min-height: 44px;
@@ -240,5 +240,16 @@ body {
     padding: 8px 12px;
     max-height: 50vh;
   }
+}
+
+/* 搜索组合框：内部搜索按钮高度与输入框保持一致。
+   主题 Button controlHeight=36 会让搜索按钮(36)高于输入框(32)，造成错位 */
+.ant-input-search .ant-input-group-addon:last-child .ant-btn.ant-input-search-button {
+  height: 32px;
+  min-height: 32px;
+  padding-inline: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 

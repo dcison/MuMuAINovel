@@ -167,6 +167,7 @@ export default function ExpansionPlanEditor({
       onCancel={handleCancel}
       width={700}
       centered
+      zIndex={2000}
       footer={[
         <Button key="cancel" onClick={handleCancel} disabled={loading}>
           取消

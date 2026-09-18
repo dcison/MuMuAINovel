@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme, Divider, Drawer, Spin } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
 import { projectApi, writingStyleApi, chapterApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, ForeshadowSelectItem } from '../types';
+import ChapterReferenceSelector from '../components/ChapterReferenceSelector';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -124,6 +125,23 @@ export default function Chapters() {
   } | null>(null);
   const batchPollingIntervalRef = useRef<number | null>(null);
 
+  // AI 创作弹窗 - 章节/伏笔参考选择
+  const [generateDialogVisible, setGenerateDialogVisible] = useState(false);
+  const [generateDialogMode, setGenerateDialogMode] = useState<'stream' | 'background'>('stream');
+  const [generateDialogChapter, setGenerateDialogChapter] = useState<Chapter | null>(null);
+  const [dialogChapterIds, setDialogChapterIds] = useState<string[]>([]);
+  const [dialogForeshadowIds, setDialogForeshadowIds] = useState<string[]>([]);
+  const [foreshadowItems, setForeshadowItems] = useState<ForeshadowSelectItem[]>([]);
+  const [foreshadowLoading, setForeshadowLoading] = useState(false);
+
+  // 右侧浮动面板 - 批量生成参考章节（sessionStorage 持久化）
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelChapterIds, setPanelChapterIds] = useState<string[]>([]);
+  const panelStorageKey = useMemo(
+    () => (currentProject?.id ? `mumuai_batch_ref_chapters_${currentProject.id}` : ''),
+    [currentProject?.id]
+  );
+
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768);
@@ -132,6 +150,32 @@ export default function Chapters() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // 项目切换时恢复面板勾选（无记录则默认全选当前已加载章节）
+  useEffect(() => {
+    if (!panelStorageKey) {
+      setPanelChapterIds([]);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(panelStorageKey);
+      const ids = raw ? JSON.parse(raw) : null;
+      setPanelChapterIds(Array.isArray(ids) ? ids : chapters.map((c) => c.id));
+    } catch {
+      setPanelChapterIds(chapters.map((c) => c.id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelStorageKey]);
+
+  // 面板勾选持久化到 sessionStorage
+  useEffect(() => {
+    if (!panelStorageKey) return;
+    try {
+      sessionStorage.setItem(panelStorageKey, JSON.stringify(panelChapterIds));
+    } catch {
+      /* ignore */
+    }
+  }, [panelStorageKey, panelChapterIds]);
 
   // 处理文本选中 - 检测选中文本并显示浮动工具栏
   const handleTextSelection = useCallback(() => {
@@ -868,6 +912,26 @@ export default function Chapters() {
     }
   };
 
+  // 将勾选结果转换为请求参数：全选或未勾选时不传（后端自动用全部），仅部分勾选时传数组
+  const toReferenceIds = (selectedIds: string[], totalCount: number): string[] | undefined => {
+    if (selectedIds.length === 0 || selectedIds.length >= totalCount) return undefined;
+    return selectedIds;
+  };
+
+  // 根据伏笔状态与当前章节号推导展示状态
+  const getForeshadowDisplayStatus = (f: ForeshadowSelectItem, currentChapterNumber: number): string => {
+    if (f.status === 'resolved') return '已回收';
+    if (f.status === 'abandoned') return '已废弃';
+    if (f.status === 'pending') return '待埋入';
+    const target = f.target_resolve_chapter_number;
+    if (target != null) {
+      if (currentChapterNumber === target) return '必须回收';
+      if (currentChapterNumber > target) return '已超期';
+      if (target - currentChapterNumber <= 3) return '即将到期';
+    }
+    return '已埋入';
+  };
+
   const handleGenerate = async () => {
     if (!editingId) return;
 
@@ -876,6 +940,13 @@ export default function Chapters() {
       setIsGenerating(true);
       setSingleChapterProgress(0);
       setSingleChapterProgressMessage('准备开始生成...');
+
+      // 计算参考章节/伏笔参数（全选时不传）
+      const previousCount = generateDialogChapter
+        ? chapters.filter((c) => c.chapter_number < generateDialogChapter.chapter_number).length
+        : 0;
+      const referenceChapterIds = toReferenceIds(dialogChapterIds, previousCount);
+      const referenceForeshadowIds = toReferenceIds(dialogForeshadowIds, foreshadowItems.length);
 
       const result = await generateChapterContentStream(
         editingId,
@@ -898,7 +969,11 @@ export default function Chapters() {
         },
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey  // 传递选中的Skill
+        selectedSkillKey,  // 传递选中的Skill
+        referenceChapterIds,
+        referenceForeshadowIds,
+        singleAutoAnalysis,  // 传递是否自动分析
+        singleAutoCreateForeshadow  // 传递是否自动创建伏笔
       );
 
       message.success('AI创作成功，正在分析章节内容...');
@@ -931,103 +1006,130 @@ export default function Chapters() {
     }
   };
 
-  const showGenerateModal = (chapter: Chapter) => {
+  // 单章生成对话框状态
+  const [singleAutoAnalysis, setSingleAutoAnalysis] = useState(true);
+  const [singleAutoCreateForeshadow, setSingleAutoCreateForeshadow] = useState(true);
+
+  const openGenerateDialog = (chapter: Chapter, mode: 'stream' | 'background' = 'stream') => {
     const previousChapters = chapters.filter(
-      c => c.chapter_number < chapter.chapter_number
+      (c) => c.chapter_number < chapter.chapter_number
     ).sort((a, b) => a.chapter_number - b.chapter_number);
 
-    const selectedStyle = writingStyles.find(s => s.id === selectedStyleId);
+    setGenerateDialogMode(mode);
+    setGenerateDialogChapter(chapter);
+    setDialogChapterIds(previousChapters.map((c) => c.id));
+    setForeshadowItems([]);
+    setDialogForeshadowIds([]);
+    setGenerateDialogVisible(true);
 
-    const instance = modal.confirm({
-      title: 'AI创作章节内容',
-      width: 700,
-      centered: true,
-      content: (
-        <div style={{ marginTop: 16 }}>
-          <p>AI将根据以下信息创作本章内容：</p>
-          <ul>
-            <li>章节大纲和要求</li>
-            <li>项目的世界观设定</li>
-            <li>相关角色信息</li>
-            <li><strong>前面已完成章节的内容（确保剧情连贯）</strong></li>
-            {selectedStyle && (
-              <li><strong>写作风格：{selectedStyle.name}</strong></li>
-            )}
-            <li><strong>目标字数：{targetWordCount}字</strong></li>
-          </ul>
+    // 拉取伏笔列表（默认全选）
+    if (currentProject?.id) {
+      setForeshadowLoading(true);
+      chapterApi
+        .getProjectForeshadows(currentProject.id)
+        .then((res) => {
+          const items = res?.items || [];
+          setForeshadowItems(items);
+          setDialogForeshadowIds(items.map((f) => f.id));
+        })
+        .catch((error) => {
+          console.error('加载伏笔列表失败:', error);
+        })
+        .finally(() => setForeshadowLoading(false));
+    }
+  };
 
-          {previousChapters.length > 0 && (
-            <div style={{
-              marginTop: 16,
-              padding: 12,
-              background: token.colorInfoBg,
-              borderRadius: token.borderRadius,
-              border: `1px solid ${token.colorInfoBorder}`
-            }}>
-              <div style={{ marginBottom: 8, fontWeight: 500, color: token.colorPrimary }}>
-                📚 将引用的前置章节（共{previousChapters.length}章）：
-              </div>
-              <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-                {previousChapters.map(ch => (
-                  <div key={ch.id} style={{ padding: '4px 0', fontSize: 13 }}>
-                    ✓ 第{ch.chapter_number}章：{ch.title} ({ch.word_count || 0}字)
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 8, fontSize: 12, color: token.colorTextSecondary }}>
-                💡 AI会参考这些章节内容，确保情节连贯、角色状态一致
-              </div>
-            </div>
-          )}
+  const handleGenerateDialogOk = () => {
+    if (!selectedStyleId) {
+      message.error('请先选择写作风格');
+      return;
+    }
+    setGenerateDialogVisible(false);
+    if (generateDialogMode === 'background') {
+      handleBackgroundGenerate();
+    } else {
+      // 传递单章生成的分析设置
+      handleGenerateWithOptions(singleAutoAnalysis, singleAutoCreateForeshadow);
+    }
+  };
 
-          <p style={{ color: token.colorError, marginTop: 16, marginBottom: 0 }}>
-            ⚠️ 注意：此操作将覆盖当前章节内容
-          </p>
-        </div>
-      ),
-      okText: '开始创作',
-      okButtonProps: { danger: true },
-      cancelText: '取消',
-      onOk: async () => {
-        instance.update({
-          okButtonProps: { danger: true, loading: true },
-          cancelButtonProps: { disabled: true },
-          closable: false,
-          maskClosable: false,
-          keyboard: false,
-        });
+  // 带选项的单章生成函数
+  const handleGenerateWithOptions = async (autoAnalysis: boolean, autoCreateForeshadow: boolean) => {
+    if (!editingId) return;
 
-        try {
-          if (!selectedStyleId) {
-            message.error('请先选择写作风格');
-            instance.update({
-              okButtonProps: { danger: true, loading: false },
-              cancelButtonProps: { disabled: false },
-              closable: true,
-              maskClosable: true,
-              keyboard: true,
-            });
-            return;
+    try {
+      setIsContinuing(true);
+      setIsGenerating(true);
+      setSingleChapterProgress(0);
+      setSingleChapterProgressMessage('准备开始生成...');
+
+      // 计算参考章节/伏笔参数（全选时不传）
+      const previousCount = generateDialogChapter
+        ? chapters.filter((c) => c.chapter_number < generateDialogChapter.chapter_number).length
+        : 0;
+      const referenceChapterIds = toReferenceIds(dialogChapterIds, previousCount);
+      const referenceForeshadowIds = toReferenceIds(dialogForeshadowIds, foreshadowItems.length);
+
+      const result = await generateChapterContentStream(
+        editingId,
+        (content) => {
+          editorForm.setFieldsValue({ content });
+
+          if (contentTextAreaRef.current) {
+            const textArea = contentTextAreaRef.current.resizableTextArea?.textArea;
+            if (textArea) {
+              textArea.scrollTop = textArea.scrollHeight;
+            }
           }
-          await handleGenerate();
-          instance.destroy();
-        } catch {
-          instance.update({
-            okButtonProps: { danger: true, loading: false },
-            cancelButtonProps: { disabled: false },
-            closable: true,
-            maskClosable: true,
-            keyboard: true,
-          });
-        }
-      },
-      onCancel: () => {
-        if (isGenerating) {
-          message.warning('AI正在创作中，请等待完成');
-          return false;
-        }
-      },
-    });
+        },
+        selectedStyleId,
+        targetWordCount,
+        (progressMsg, progressValue) => {
+          // 进度回调
+          setSingleChapterProgress(progressValue);
+          setSingleChapterProgressMessage(progressMsg);
+        },
+        selectedModel,  // 传递选中的模型
+        temporaryNarrativePerspective,  // 传递临时人称参数
+        selectedSkillKey,  // 传递选中的Skill
+        referenceChapterIds,
+        referenceForeshadowIds,
+        autoAnalysis,
+        autoCreateForeshadow
+      );
+
+      if (!autoAnalysis) {
+        message.success('AI创作成功（已跳过分析）');
+      } else {
+        message.success('AI创作成功，正在分析章节内容...');
+      }
+
+      // 如果返回了分析任务ID，启动轮询
+      if (result?.analysis_task_id) {
+        const taskId = result.analysis_task_id;
+        setAnalysisTasksMap(prev => ({
+          ...prev,
+          [editingId]: {
+            has_task: true,
+            task_id: taskId,
+            chapter_id: editingId,
+            status: 'pending',
+            progress: 0
+          }
+        }));
+
+        // 启动轮询
+        startPollingTask(editingId);
+      }
+    } catch (error) {
+      const apiError = error as ApiError;
+      message.error('AI创作失败：' + (apiError.response?.data?.detail || apiError.message || '未知错误'));
+    } finally {
+      setIsContinuing(false);
+      setIsGenerating(false);
+      setSingleChapterProgress(0);
+      setSingleChapterProgressMessage('');
+    }
   };
 
 
@@ -1062,6 +1164,12 @@ export default function Chapters() {
         return latestChapters;
       };
 
+      const previousCount = generateDialogChapter
+        ? chapters.filter((c) => c.chapter_number < generateDialogChapter.chapter_number).length
+        : 0;
+      const referenceChapterIds = toReferenceIds(dialogChapterIds, previousCount);
+      const referenceForeshadowIds = toReferenceIds(dialogForeshadowIds, foreshadowItems.length);
+
       await generateChapterBackground(
         generatedChapterId,
         {
@@ -1069,6 +1177,10 @@ export default function Chapters() {
           target_word_count: targetWordCount,
           model: selectedModel,
           narrative_perspective: temporaryNarrativePerspective,
+          reference_chapter_ids: referenceChapterIds,
+          reference_foreshadow_ids: referenceForeshadowIds,
+          auto_analysis: singleAutoAnalysis,
+          auto_create_foreshadow: singleAutoCreateForeshadow,
         },
         async (status) => {
           if (status.progress_details?.stage !== 'analyzing' || analysisTrackingStarted) return;
@@ -1216,14 +1328,17 @@ export default function Chapters() {
         start_chapter_number: number;
         count: number;
         enable_analysis: boolean;
+        auto_create_foreshadow: boolean;
         style_id: number;
         target_word_count: number;
         model?: string;
         skill_key?: string;
+        reference_chapter_ids?: string[];
       } = {
         start_chapter_number: values.startChapterNumber,
         count: values.count,
         enable_analysis: values.enableAnalysis,
+        auto_create_foreshadow: values.autoCreateForeshadow ?? true,
         style_id: styleId,
         target_word_count: wordCount,
       };
@@ -1240,6 +1355,15 @@ export default function Chapters() {
       if (batchSelectedSkillKey) {
         requestBody.skill_key = batchSelectedSkillKey;
         console.log('[批量生成] 请求体包含skill_key:', batchSelectedSkillKey);
+      }
+
+      // 从右侧浮动面板读取参考章节（全选时不传，后端自动使用全部）
+      const batchReferenceChapterIds = toReferenceIds(panelChapterIds, chapters.length);
+      if (batchReferenceChapterIds) {
+        requestBody.reference_chapter_ids = batchReferenceChapterIds;
+        console.log('[批量生成] 请求体包含reference_chapter_ids:', batchReferenceChapterIds.length);
+      } else {
+        console.log('[批量生成] 参考章节全选或未选，不传reference_chapter_ids');
       }
 
       console.log('[批量生成] 完整请求体:', JSON.stringify(requestBody, null, 2));
@@ -2642,7 +2766,7 @@ export default function Chapters() {
                   <Button
                     type="primary"
                     icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
-                    onClick={() => currentChapter && showGenerateModal(currentChapter)}
+                    onClick={() => currentChapter && openGenerateDialog(currentChapter)}
                     loading={isContinuing}
                     disabled={!canGenerate}
                     danger={!canGenerate}
@@ -2653,7 +2777,7 @@ export default function Chapters() {
                   </Button>
                   <Button
                     icon={<RocketOutlined />}
-                    onClick={handleBackgroundGenerate}
+                    onClick={() => currentChapter && openGenerateDialog(currentChapter, 'background')}
                     disabled={!canGenerate || isContinuing}
                     style={{ fontWeight: 'bold' }}
                     title={!canGenerate ? disabledReason : '后台生成：关闭浏览器也不影响，完成后自动保存'}
@@ -2948,6 +3072,7 @@ export default function Chapters() {
               startChapterNumber: sortedChapters.find(ch => !ch.content || ch.content.trim() === '')?.chapter_number || 1,
               count: 5,
               enableAnalysis: true,
+              autoCreateForeshadow: true,
               styleId: selectedStyleId,
               targetWordCount: getCachedWordCount(),
               model: selectedModel,
@@ -3083,19 +3208,33 @@ export default function Chapters() {
               </Form.Item>
             </div>
 
-            {/* 同步分析（固定开启） */}
+            {/* 分析设置 */}
             <Form.Item
-              label="同步分析"
+              label="分析设置"
               name="enableAnalysis"
-              tooltip="必须开启，确保剧情连贯"
+              tooltip="开启后将自动生成章节并执行分析（提取伏笔、角色状态等）"
               style={{ marginBottom: 12 }}
             >
-              <Radio.Group disabled>
-                <Radio value={true}>
-                  <span style={{ fontSize: 12, color: token.colorSuccess }}>✓ 自动更新角色状态</span>
-                </Radio>
+              <Radio.Group>
+                <Radio value={true}>✓ 自动分析</Radio>
+                <Radio value={false}>✗ 跳过分析</Radio>
               </Radio.Group>
             </Form.Item>
+
+            {/* 仅在开启分析时显示 */}
+            {batchForm.getFieldsValue(['enableAnalysis']) && (
+              <Form.Item
+                label="自动创建伏笔设置"
+                name="autoCreateForeshadow"
+                tooltip="关闭后，分析时不会自动创建新的伏笔记录"
+                style={{ marginBottom: 12 }}
+              >
+                <Radio.Group>
+                  <Radio value={true}>✓ 自动创建伏笔</Radio>
+                  <Radio value={false}>✗ 不创建伏笔</Radio>
+                </Radio.Group>
+              </Form.Item>
+            )}
           </Form>
         ) : (
           <div>
@@ -3197,6 +3336,166 @@ export default function Chapters() {
           />
         );
       })()}
+
+      {/* AI 创作弹窗 - 章节/伏笔参考选择 */}
+      <Modal
+        title="AI创作章节内容"
+        open={generateDialogVisible}
+        onOk={handleGenerateDialogOk}
+        onCancel={() => setGenerateDialogVisible(false)}
+        okText={generateDialogMode === 'background' ? '开始后台生成' : '开始创作'}
+        okButtonProps={{ danger: true }}
+        cancelText="取消"
+        width={isMobile ? 'calc(100vw - 32px)' : 700}
+        centered
+      >
+        <div style={{ marginTop: 8 }}>
+          <p style={{ marginBottom: 12 }}>AI将根据以下信息创作本章内容：</p>
+          <ul style={{ marginBottom: 16 }}>
+            <li>章节大纲和要求</li>
+            <li>项目的世界观设定</li>
+            <li>相关角色信息</li>
+            <li><strong>参考章节内容（确保剧情连贯）</strong></li>
+            <li><strong>目标字数：{targetWordCount}字</strong></li>
+          </ul>
+
+          {(() => {
+            const previousChapters = generateDialogChapter
+              ? sortedChapters
+                  .filter((c) => c.chapter_number < generateDialogChapter.chapter_number)
+                  .sort((a, b) => a.chapter_number - b.chapter_number)
+              : [];
+            const chapterItems = previousChapters.map((c) => ({
+              id: c.id,
+              label: `第${c.chapter_number}章：${c.title} (${c.word_count || 0}字)`,
+            }));
+            const foreshadowRefItems = foreshadowItems.map((f) => {
+              const status = getForeshadowDisplayStatus(f, generateDialogChapter?.chapter_number ?? 0);
+              const plantText = f.plant_chapter_number != null ? `第${f.plant_chapter_number}章埋入` : '未埋入';
+              return { id: f.id, label: `[${status}] ${plantText}: ${f.title || '无标题'}` };
+            });
+            return (
+              <>
+                <ChapterReferenceSelector
+                  title="📚 选择参考章节"
+                  items={chapterItems}
+                  value={dialogChapterIds}
+                  onChange={setDialogChapterIds}
+                  unit="章"
+                  maxHeight={180}
+                />
+                <Divider style={{ margin: '16px 0' }} />
+                {foreshadowLoading ? (
+                  <div style={{ textAlign: 'center', padding: 16 }}>
+                    <Spin size="small" /> <span style={{ marginLeft: 8, fontSize: 13 }}>加载伏笔中...</span>
+                  </div>
+                ) : (
+                  <ChapterReferenceSelector
+                    title="🔮 选择参考伏笔"
+                    items={foreshadowRefItems}
+                    value={dialogForeshadowIds}
+                    onChange={setDialogForeshadowIds}
+                    unit="伏笔"
+                    maxHeight={180}
+                  />
+                )}
+              </>
+            );
+          })()}
+
+          {/* 分析设置 */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 13, color: token.colorTextSecondary, marginBottom: 8 }}>分析设置</div>
+            <Radio.Group
+              value={singleAutoAnalysis}
+              onChange={(e) => setSingleAutoAnalysis(e.target.value)}
+            >
+              <Radio value={true}>✓ 自动分析</Radio>
+              <Radio value={false}>✗ 跳过分析</Radio>
+            </Radio.Group>
+            <div style={{ fontSize: 12, color: token.colorTextTertiary, marginTop: 4 }}>
+              开启后将自动生成章节并执行分析（提取伏笔、角色状态等）
+            </div>
+          </div>
+
+          {/* 仅在开启分析时显示 */}
+          {singleAutoAnalysis && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: token.colorTextSecondary, marginBottom: 8 }}>自动创建伏笔设置</div>
+              <Radio.Group
+                value={singleAutoCreateForeshadow}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSingleAutoCreateForeshadow(val === true || val === "true");
+                }}
+              >
+                <Radio value={true}>✓ 自动创建伏笔</Radio>
+                <Radio value={false}>✗ 不创建伏笔</Radio>
+              </Radio.Group>
+              <div style={{ fontSize: 12, color: token.colorTextTertiary, marginTop: 4 }}>
+                关闭后，分析时不会自动创建新的伏笔记录
+              </div>
+            </div>
+          )}
+
+          <p style={{ color: token.colorError, marginTop: 16, marginBottom: 0 }}>
+            ⚠️ 注意：此操作将覆盖当前章节内容
+          </p>
+        </div>
+      </Modal>
+
+      {/* 右侧浮动面板 - 写作上下文选择（仅用于批量生成） */}
+      {!isMobile && (
+        <>
+          <div
+            onClick={() => setPanelOpen(true)}
+            style={{
+              position: 'fixed',
+              right: 0,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              zIndex: 1000,
+              width: 40,
+              height: 120,
+              background: 'linear-gradient(135deg, #667eea, #764ba2)',
+              color: '#fff',
+              borderRadius: '8px 0 0 8px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              writingMode: 'vertical-rl',
+              letterSpacing: 4,
+              boxShadow: '-2px 2px 12px rgba(102,126,234,0.3)',
+              fontSize: 13,
+              userSelect: 'none',
+            }}
+          >
+            章节选择
+          </div>
+          <Drawer
+            title={null}
+            placement="right"
+            open={panelOpen}
+            onClose={() => setPanelOpen(false)}
+            mask={false}
+            width={320}
+            styles={{ body: { padding: 12 } }}
+          >
+            <ChapterReferenceSelector
+              title="📋 写作上下文选择"
+              items={sortedChapters.map((c) => ({ id: c.id, label: `第${c.chapter_number}章：${c.title}` }))}
+              value={panelChapterIds}
+              onChange={setPanelChapterIds}
+              unit="章"
+              maxHeight={window.innerHeight - 160}
+            />
+            <div style={{ marginTop: 12, fontSize: 12, color: token.colorTextSecondary }}>
+              💡 该选择仅用于批量生成章节时的上下文参考
+            </div>
+          </Drawer>
+        </>
+      )}
     </div>
   );
 }

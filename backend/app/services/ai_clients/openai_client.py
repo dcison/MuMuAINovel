@@ -74,6 +74,9 @@ class OpenAIClient(BaseAIClient):
         }
         if stream:
             payload["stream"] = True
+        # DeepSeek 推理模型（如 deepseek-v4-pro）：启用推理（最大强度），
+        if "deepseek" in model.lower():
+            payload["reasoning_effort"] = "max"
         if tools:
             # 清理 $schema 字段
             cleaned = []

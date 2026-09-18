@@ -37,6 +37,10 @@ class ChapterRegenerateRequest(BaseModel):
     version_note: Optional[str] = Field(None, description="版本说明", max_length=500)
     auto_apply: bool = Field(False, description="是否自动应用（替换当前内容）")
 
+    # 参考上下文（前向兼容：当前重新生成流程不依赖章节上下文服务，字段仅接收并记录）
+    reference_chapter_ids: Optional[List[str]] = Field(None, description="指定作为上下文参考的前置章节ID列表，为空则自动包含所有前置章节")
+    reference_foreshadow_ids: Optional[List[str]] = Field(None, description="指定作为上下文参考的伏笔ID列表，为空则自动包含所有伏笔")
+
 
 class RegenerationTaskResponse(BaseModel):
     """重新生成任务响应"""
