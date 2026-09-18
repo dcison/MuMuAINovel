@@ -264,7 +264,8 @@ async def analyze_chapter(
                     project_id=project_id,
                     chapter_id=chapter_id,
                     chapter_number=chapter.chapter_number,
-                    analysis_foreshadows=analysis_foreshadows
+                    analysis_foreshadows=analysis_foreshadows,
+                    auto_create_foreshadow=True  # 记忆分析默认允许创建伏笔
                 )
                 logger.info(f"📊 伏笔自动更新: 埋入{foreshadow_stats['planted_count']}个, 回收{foreshadow_stats['resolved_count']}个")
             except Exception as fs_error:

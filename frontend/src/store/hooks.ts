@@ -289,22 +289,37 @@ export function useChapterSync() {
     onProgressUpdate?: (message: string, progress: number) => void,
     model?: string,
     narrativePerspective?: string,
-    skillKey?: string
+    skillKey?: string,
+    referenceChapterIds?: string[],
+    referenceForeshadowIds?: string[],
+    autoAnalysis?: boolean,
+    autoCreateForeshadow?: boolean
   ) => {
     try {
+      const requestBody: Record<string, unknown> = {
+        style_id: styleId,
+        target_word_count: targetWordCount,
+        model: model,
+        narrative_perspective: narrativePerspective,
+        skill_key: skillKey,
+        auto_analysis: autoAnalysis ?? true,
+        auto_create_foreshadow: autoCreateForeshadow ?? true
+      };
+      // 全选时不传 reference_chapter_ids / reference_foreshadow_ids（后端自动使用全部）
+      if (referenceChapterIds && referenceChapterIds.length > 0) {
+        requestBody.reference_chapter_ids = referenceChapterIds;
+      }
+      if (referenceForeshadowIds && referenceForeshadowIds.length > 0) {
+        requestBody.reference_foreshadow_ids = referenceForeshadowIds;
+      }
+
       // 使用fetch处理流式响应
       const response = await fetch(`/api/chapters/${chapterId}/generate-stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          style_id: styleId,
-          target_word_count: targetWordCount,
-          model: model,
-          narrative_perspective: narrativePerspective,
-          skill_key: skillKey
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {

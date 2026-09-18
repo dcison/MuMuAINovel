@@ -1,6 +1,7 @@
 """提示词管理服务"""
 from typing import Dict, Any, Optional
 import json
+import re
 from app.services.skill_loader import get_all_skills_cached
 
 
@@ -135,7 +136,7 @@ class PromptService:
 
 <output priority="P0">
 【输出格式】
-生成包含以下四个字段的JSON对象，每个字段300-500字：
+生成包含以下六个字段的JSON对象，每个字段300-500字：
 
 1. **time_period**（时间背景与社会状态）
    - 根据类型设定合适规模的时间背景
@@ -163,6 +164,18 @@ class PromptService:
    - 权力结构和利益格局
    - 社会禁忌及后果
 
+5. **climate**（气候特征与季节变化）
+   - 世界的主要气候类型（温带、热带、寒带、魔法气候等）
+   - 温度范围、降水模式、季节变化特征
+   - 气候对居民生活、农业、交通的影响
+   - 特殊气候现象（如：灵气潮汐、魔法风暴、永夜等）
+
+6. **clothing**（服装风格与服饰文化）
+   - 适应气候和地点的服装材质、款式
+   - 不同阶层、职业、种族的服饰差异
+   - 服饰的文化象征和社会意义
+   - 特殊功能服装（如：法器服饰、防护服、礼仪服装等）
+
 【格式规范】
 - 纯JSON输出，以{{开始、}}结束
 - 无markdown标记、代码块符号
@@ -175,7 +188,9 @@ class PromptService:
   "time_period": "时间背景与社会状态的详细描述（300-500字）",
   "location": "空间环境与地理特征的详细描述（300-500字）",
   "atmosphere": "感官体验与情感基调的详细描述（300-500字）",
-  "rules": "世界规则与社会结构的详细描述（300-500字）"
+  "rules": "世界规则与社会结构的详细描述（300-500字）",
+  "climate": "气候特征与季节变化的详细描述（300-500字）",
+  "clothing": "服装风格与服饰文化的详细描述（300-500字）"
 }}
 </output>
 
@@ -219,6 +234,8 @@ class PromptService:
 地理位置：{location}
 氛围基调：{atmosphere}
 世界规则：{rules}
+气候特征：{climate}
+服装风格：{clothing}
 
 主题：{theme}
 类型：{genre}
@@ -2619,7 +2636,19 @@ class PromptService:
             格式化后的提示词
         """
         try:
-            return template.format(**kwargs)
+            result = template.format(**kwargs)
+            
+            # 处理空职业信息：如果 chapter_careers 为空，移除整个 <careers> 块
+            # 匹配 <careers> 标签，包括其中的所有内容（非贪婪匹配）
+            if not kwargs.get('chapter_careers'):
+                result = re.sub(
+                    r'<careers[^>]*>.*?</careers>\s*',
+                    '',
+                    result,
+                    flags=re.DOTALL
+                )
+            
+            return result
         except KeyError as e:
             raise ValueError(f"缺少必需的参数: {e}")
     

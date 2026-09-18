@@ -717,6 +717,12 @@ export const chapterApi = {
 
   deleteChapter: (id: string) => api.delete(`/chapters/${id}`),
 
+  updateExpansionPlan: (chapterId: string, data: import('../types').ExpansionPlanData & { summary?: string }) =>
+    api.put<unknown, { message: string }>(`/chapters/${chapterId}/expansion-plan`, data),
+
+  getProjectForeshadows: (projectId: string) =>
+    api.get<unknown, { total: number; items: import('../types').ForeshadowSelectItem[] }>(`/chapters/project/${projectId}/foreshadows`),
+
   checkCanGenerate: (chapterId: string) =>
     api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
 

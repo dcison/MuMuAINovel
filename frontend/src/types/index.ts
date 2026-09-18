@@ -169,6 +169,8 @@ export interface Project {
   world_location?: string;
   world_atmosphere?: string;
   world_rules?: string;
+  world_climate?: string;
+  world_clothing?: string;
   chapter_count?: number;
   narrative_perspective?: string;
   character_count?: number;
@@ -194,6 +196,8 @@ export interface ProjectCreate {
   world_location?: string;
   world_atmosphere?: string;
   world_rules?: string;
+  world_climate?: string;
+  world_clothing?: string;
 }
 
 export interface ProjectUpdate {
@@ -207,6 +211,8 @@ export interface ProjectUpdate {
   world_location?: string;
   world_atmosphere?: string;
   world_rules?: string;
+  world_climate?: string;
+  world_clothing?: string;
   chapter_count?: number;
   narrative_perspective?: string;
   character_count?: number;
@@ -388,6 +394,8 @@ export interface ChapterUpdate {
 export interface ChapterGenerateRequest {
   style_id?: number;
   target_word_count?: number;
+  reference_chapter_ids?: string[];
+  reference_foreshadow_ids?: string[];
 }
 
 // 章节生成检查响应
@@ -896,6 +904,17 @@ export interface Foreshadow {
   updated_at?: string;
   planted_at?: string;
   resolved_at?: string;
+}
+
+// 章节生成弹窗/面板中用于选择的伏笔精简条目（GET /api/chapters/project/{id}/foreshadows）
+export interface ForeshadowSelectItem {
+  id: string;
+  title: string;
+  content?: string;
+  plant_chapter_number?: number | null;
+  target_resolve_chapter_number?: number | null;
+  resolution_notes?: string;
+  status?: ForeshadowStatus;
 }
 
 export interface ForeshadowCreate {

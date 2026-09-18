@@ -27,6 +27,8 @@ class Project(Base):
     world_location = Column(Text, comment="地理位置")
     world_atmosphere = Column(Text, comment="氛围基调")
     world_rules = Column(Text, comment="世界规则")
+    world_climate = Column(Text, comment="气候设定")
+    world_clothing = Column(Text, comment="服装设定")
     
     # 项目配置
     chapter_count = Column(Integer, comment="章节数量")

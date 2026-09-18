@@ -5,7 +5,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, List, Optional
 from datetime import datetime, timedelta
 from asyncio import Queue, Lock
 
@@ -85,6 +85,21 @@ def _build_lightweight_chapter_summary(content: str, max_length: int = 300) -> s
         return ""
     normalized = " ".join(content.split())
     return normalized[:max_length]
+
+
+def _log_reference_params(
+    reference_chapter_ids: Optional[List[str]] = None,
+    reference_foreshadow_ids: Optional[List[str]] = None,
+) -> None:
+    """输出生成端点收到的参考章节/伏笔日志。"""
+    if reference_chapter_ids:
+        logger.info(f"📥 [API] 收到 reference_chapter_ids: {len(reference_chapter_ids)} 个章节 -> {reference_chapter_ids}")
+    else:
+        logger.info(f"📥 [API] 未指定 reference_chapter_ids，将使用全部前置章节")
+    if reference_foreshadow_ids:
+        logger.info(f"📥 [API] 收到 reference_foreshadow_ids: {len(reference_foreshadow_ids)} 个伏笔 -> {reference_foreshadow_ids}")
+    else:
+        logger.info(f"📥 [API] 未指定 reference_foreshadow_ids，将使用全部伏笔")
 
 
 async def get_db_write_lock(user_id: str) -> Lock:
@@ -229,6 +244,40 @@ async def get_project_chapters(
         chapters_with_outline.append(chapter_dict)
     
     return ChapterListResponse(total=total, items=chapters_with_outline)
+
+
+@router.get("/project/{project_id}/foreshadows", summary="获取项目的所有伏笔")
+async def get_project_foreshadows(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取指定项目的所有伏笔列表（用于章节生成时选择参考伏笔）"""
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(project_id, user_id, db)
+    
+    from app.models.foreshadow import Foreshadow
+    
+    result = await db.execute(
+        select(Foreshadow)
+        .where(Foreshadow.project_id == project_id)
+        .order_by(Foreshadow.plant_chapter_number)
+    )
+    foreshadows = result.scalars().all()
+    
+    items = []
+    for f in foreshadows:
+        items.append({
+            "id": f.id,
+            "title": f.title,
+            "content": f.content[:200] if f.content else "",
+            "plant_chapter_number": f.plant_chapter_number,
+            "target_resolve_chapter_number": f.target_resolve_chapter_number,
+            "resolution_notes": f.resolution_notes,
+            "status": getattr(f, 'status', None),
+        })
+    
+    return {"total": len(items), "items": items}
 
 
 @router.get("/{chapter_id}", response_model=ChapterResponse, summary="获取章节详情")
@@ -890,6 +939,7 @@ async def analyze_chapter_background(
     task_id: str,
     ai_service: Optional[AIService] = None,
     progress_callback: Optional[Callable[[int], Awaitable[None]]] = None,
+    auto_create_foreshadow: bool = True,
 ) -> bool:
     """执行有硬超时保障的章节分析，并确保中断后任务进入终态。"""
     try:
@@ -901,6 +951,7 @@ async def analyze_chapter_background(
                 task_id=task_id,
                 ai_service=ai_service,
                 progress_callback=progress_callback,
+                auto_create_foreshadow=auto_create_foreshadow,
             ),
             timeout=ANALYSIS_TASK_TIMEOUT_SECONDS,
         )
@@ -929,6 +980,7 @@ async def _analyze_chapter_background_impl(
     task_id: str,
     ai_service: Optional[AIService] = None,
     progress_callback: Optional[Callable[[int], Awaitable[None]]] = None,
+    auto_create_foreshadow: bool = True,
 ) -> bool:
     """
     后台异步分析章节（支持并发，使用锁保护数据库写入）
@@ -955,7 +1007,7 @@ async def _analyze_chapter_background_impl(
             logger.warning(f"⚠️ 同步章节分析进度失败: {callback_error}")
     
     try:
-        logger.info(f"🔍 开始分析章节: {chapter_id}, 任务ID: {task_id}")
+        logger.info(f"🔍 开始分析章节: {chapter_id}, 任务ID: {task_id}, auto_create_foreshadow={auto_create_foreshadow}")
         
         # 创建独立数据库会话
         from app.database import get_engine
@@ -1389,7 +1441,8 @@ async def _analyze_chapter_background_impl(
                         project_id=project_id,
                         chapter_id=chapter_id,
                         chapter_number=chapter.chapter_number,
-                        analysis_foreshadows=analysis_result.get('foreshadows', [])
+                        analysis_foreshadows=analysis_result.get('foreshadows', []),
+                        auto_create_foreshadow=auto_create_foreshadow
                     )
                 
                 if foreshadow_stats['planted_count'] > 0 or foreshadow_stats['resolved_count'] > 0:
@@ -1458,6 +1511,17 @@ async def generate_chapter_content_stream(
     custom_model = generate_request.model if hasattr(generate_request, 'model') else None
     temp_narrative_perspective = generate_request.narrative_perspective if hasattr(generate_request, 'narrative_perspective') else None
     skill_key = generate_request.skill_key if hasattr(generate_request, 'skill_key') else None
+    reference_chapter_ids = generate_request.reference_chapter_ids if hasattr(generate_request, 'reference_chapter_ids') else None
+    reference_foreshadow_ids = generate_request.reference_foreshadow_ids if hasattr(generate_request, 'reference_foreshadow_ids') else None
+    
+    if reference_chapter_ids:
+        logger.info(f"📥 [API] 收到 reference_chapter_ids: {len(reference_chapter_ids)} 个章节 -> {reference_chapter_ids}")
+    else:
+        logger.info(f"📥 [API] 未指定 reference_chapter_ids，将使用全部前置章节")
+    if reference_foreshadow_ids:
+        logger.info(f"📥 [API] 收到 reference_foreshadow_ids: {len(reference_foreshadow_ids)} 个伏笔 -> {reference_foreshadow_ids}")
+    else:
+        logger.info(f"📥 [API] 未指定 reference_foreshadow_ids，将使用全部伏笔")
     # 预先验证章节存在性（使用临时会话）
     async for temp_db in get_db(request):
         try:
@@ -1585,7 +1649,9 @@ async def generate_chapter_content_stream(
                         outline=outline,
                         user_id=current_user_id,
                         db=db_session,
-                        target_word_count=target_word_count
+                        target_word_count=target_word_count,
+                        reference_chapter_ids=reference_chapter_ids,
+                        reference_foreshadow_ids=reference_foreshadow_ids
                     )
                     
                     # 日志输出统计信息
@@ -1612,7 +1678,9 @@ async def generate_chapter_content_stream(
                         db=db_session,
                         style_content=style_content,
                         target_word_count=target_word_count,
-                        temp_narrative_perspective=temp_narrative_perspective
+                        temp_narrative_perspective=temp_narrative_perspective,
+                        reference_chapter_ids=reference_chapter_ids,
+                        reference_foreshadow_ids=reference_foreshadow_ids
                     )
                     
                     # 日志输出统计信息
@@ -1843,8 +1911,7 @@ async def generate_chapter_content_stream(
                 new_word_count = len(full_content)
                 current_chapter.word_count = new_word_count
                 current_chapter.status = "completed"
-                current_chapter.summary = _build_lightweight_chapter_summary(full_content)
-                
+
                 # 更新项目字数
                 project.current_words = project.current_words - old_word_count + new_word_count
                 
@@ -1878,33 +1945,38 @@ async def generate_chapter_content_stream(
                 except Exception as plant_error:
                     logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
                 
-                # 创建分析任务
-                analysis_task = AnalysisTask(
-                    chapter_id=chapter_id,
-                    user_id=current_user_id,
-                    project_id=project.id,
-                    status='pending',
-                    progress=0
-                )
-                db_session.add(analysis_task)
-                await db_session.commit()
-                await db_session.refresh(analysis_task)
-                
-                task_id = analysis_task.id
-                logger.info(f"📋 已创建分析任务: {task_id}")
-                
-                # 短暂延迟确保SQLite WAL完成写入
-                await asyncio.sleep(0.05)
-                
-                # 直接启动后台分析（并发执行）
-                background_tasks.add_task(
-                    analyze_chapter_background,
-                    chapter_id=chapter_id,
-                    user_id=current_user_id,
-                    project_id=project.id,
-                    task_id=task_id,
-                    ai_service=user_ai_service
-                )
+                # 创建分析任务（根据 auto_analysis 参数决定是否创建）
+                task_id = None
+                if generate_request.auto_analysis:
+                    analysis_task = AnalysisTask(
+                        chapter_id=chapter_id,
+                        user_id=current_user_id,
+                        project_id=project.id,
+                        status='pending',
+                        progress=0
+                    )
+                    db_session.add(analysis_task)
+                    await db_session.commit()
+                    await db_session.refresh(analysis_task)
+                    
+                    task_id = analysis_task.id
+                    logger.info(f"📋 已创建分析任务: {task_id}")
+                    
+                    # 短暂延迟确保SQLite WAL完成写入
+                    await asyncio.sleep(0.05)
+                    
+                    # 直接启动后台分析（并发执行）
+                    background_tasks.add_task(
+                        analyze_chapter_background,
+                        chapter_id=chapter_id,
+                        user_id=current_user_id,
+                        project_id=project.id,
+                        task_id=task_id,
+                        ai_service=user_ai_service,
+                        auto_create_foreshadow=generate_request.auto_create_foreshadow
+                    )
+                else:
+                    logger.info("⏭️ 已跳过自动分析（auto_analysis=False）")
                 
                 yield await tracker.saving("章节保存完成", 0.8)
                 
@@ -2022,6 +2094,10 @@ async def generate_chapter_content_background(
             "model": generate_request.model,
             "narrative_perspective": generate_request.narrative_perspective,
             "skill_key": generate_request.skill_key,
+            "reference_chapter_ids": generate_request.reference_chapter_ids,
+            "reference_foreshadow_ids": generate_request.reference_foreshadow_ids,
+            "auto_analysis": generate_request.auto_analysis,
+            "auto_create_foreshadow": generate_request.auto_create_foreshadow,
         },
         db=db
     )
@@ -2052,6 +2128,10 @@ async def generate_chapter_content_background(
                         "model": generate_request.model,
                         "narrative_perspective": generate_request.narrative_perspective,
                         "skill_key": generate_request.skill_key,
+                        "reference_chapter_ids": generate_request.reference_chapter_ids,
+                        "reference_foreshadow_ids": generate_request.reference_foreshadow_ids,
+                        "auto_analysis": generate_request.auto_analysis,
+                        "auto_create_foreshadow": generate_request.auto_create_foreshadow,
                     },
                     db=bg_db,
                     ai_service=bg_ai_service,
@@ -2096,6 +2176,9 @@ async def _run_chapter_generation_bg(
     custom_model = task_input.get("model")
     temp_narrative_perspective = task_input.get("narrative_perspective")
     enable_mcp = task_input.get("enable_mcp", True)
+    reference_chapter_ids = task_input.get("reference_chapter_ids")
+    reference_foreshadow_ids = task_input.get("reference_foreshadow_ids")
+    _log_reference_params(reference_chapter_ids, reference_foreshadow_ids)
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2156,7 +2239,9 @@ async def _run_chapter_generation_bg(
             outline=outline,
             user_id=user_id,
             db=db,
-            target_word_count=target_word_count
+            target_word_count=target_word_count,
+            reference_chapter_ids=reference_chapter_ids,
+            reference_foreshadow_ids=reference_foreshadow_ids
         )
     else:
         context_builder = OneToManyContextBuilder(
@@ -2171,7 +2256,9 @@ async def _run_chapter_generation_bg(
             db=db,
             style_content=style_content,
             target_word_count=target_word_count,
-            temp_narrative_perspective=temp_narrative_perspective
+            temp_narrative_perspective=temp_narrative_perspective,
+            reference_chapter_ids=reference_chapter_ids,
+            reference_foreshadow_ids=reference_foreshadow_ids
         )
 
     await tracker.loading("上下文构建完成", 0.8)
@@ -2339,7 +2426,6 @@ async def _run_chapter_generation_bg(
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
-        current_chapter.summary = _build_lightweight_chapter_summary(full_content)
 
         # 更新项目字数
         project_result = await db.execute(
@@ -2377,39 +2463,52 @@ async def _run_chapter_generation_bg(
     except Exception as plant_error:
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
-    # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
-    )
-    db.add(analysis_task)
-    await db.commit()
-    await db.refresh(analysis_task)
+    # 根据 auto_analysis 参数决定是否创建分析任务
+    auto_analysis = task_input.get("auto_analysis", True)
+    auto_create_foreshadow = task_input.get("auto_create_foreshadow", True)
+    
+    if auto_analysis:
+        analysis_task = AnalysisTask(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            status='pending',
+            progress=0
+        )
+        db.add(analysis_task)
+        await db.commit()
+        await db.refresh(analysis_task)
 
-    logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
 
-    await tracker.set_result({
-        "chapter_id": chapter_id,
-        "word_count": new_word_count,
-        "analysis_task_id": analysis_task.id,
-    })
-    await tracker.analyzing(0, "章节创作完成，准备分析...")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": analysis_task.id,
+        })
+        await tracker.analyzing(0, "章节创作完成，准备分析...")
 
-    analysis_success = await analyze_chapter_background(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        task_id=analysis_task.id,
-        progress_callback=tracker.analyzing,
-    )
-    if not analysis_success:
-        raise RuntimeError("章节内容已生成，但章节分析失败")
+        analysis_success = await analyze_chapter_background(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            task_id=analysis_task.id,
+            progress_callback=tracker.analyzing,
+            auto_create_foreshadow=auto_create_foreshadow,
+        )
+        if not analysis_success:
+            raise RuntimeError("章节内容已生成，但章节分析失败")
 
-    # === 完成 ===
-    await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+        # === 完成 ===
+        await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+    else:
+        logger.info("⏭️ 后台生成：已跳过自动分析（auto_analysis=False）")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": None,
+        })
+        await tracker.complete(f"创作完成！（已跳过分析）共 {new_word_count} 字")
 
 
 def _build_analysis_task_status_payload(
@@ -2535,6 +2634,8 @@ async def generate_chapter_content_background_legacy(
             "enable_mcp": generate_request.enable_mcp,
             "model": generate_request.model,
             "narrative_perspective": generate_request.narrative_perspective,
+            "reference_chapter_ids": generate_request.reference_chapter_ids,
+            "reference_foreshadow_ids": generate_request.reference_foreshadow_ids,
         },
         db=db
     )
@@ -2564,6 +2665,10 @@ async def generate_chapter_content_background_legacy(
                         "enable_mcp": generate_request.enable_mcp,
                         "model": generate_request.model,
                         "narrative_perspective": generate_request.narrative_perspective,
+                        "reference_chapter_ids": generate_request.reference_chapter_ids,
+                        "reference_foreshadow_ids": generate_request.reference_foreshadow_ids,
+                        "auto_analysis": generate_request.auto_analysis,
+                        "auto_create_foreshadow": generate_request.auto_create_foreshadow,
                     },
                     db=bg_db,
                     ai_service=bg_ai_service,
@@ -2609,6 +2714,9 @@ async def _run_chapter_generation_bg(
     temp_narrative_perspective = task_input.get("narrative_perspective")
     enable_mcp = task_input.get("enable_mcp", True)
     skill_key = task_input.get("skill_key")
+    reference_chapter_ids = task_input.get("reference_chapter_ids")
+    reference_foreshadow_ids = task_input.get("reference_foreshadow_ids")
+    _log_reference_params(reference_chapter_ids, reference_foreshadow_ids)
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2669,7 +2777,9 @@ async def _run_chapter_generation_bg(
             outline=outline,
             user_id=user_id,
             db=db,
-            target_word_count=target_word_count
+            target_word_count=target_word_count,
+            reference_chapter_ids=reference_chapter_ids,
+            reference_foreshadow_ids=reference_foreshadow_ids
         )
     else:
         context_builder = OneToManyContextBuilder(
@@ -2684,7 +2794,9 @@ async def _run_chapter_generation_bg(
             db=db,
             style_content=style_content,
             target_word_count=target_word_count,
-            temp_narrative_perspective=temp_narrative_perspective
+            temp_narrative_perspective=temp_narrative_perspective,
+            reference_chapter_ids=reference_chapter_ids,
+            reference_foreshadow_ids=reference_foreshadow_ids
         )
 
     await tracker.loading("上下文构建完成", 0.8)
@@ -2873,7 +2985,6 @@ async def _run_chapter_generation_bg(
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
-        current_chapter.summary = _build_lightweight_chapter_summary(full_content)
 
         # 更新项目字数
         project_result = await db.execute(
@@ -2911,40 +3022,53 @@ async def _run_chapter_generation_bg(
     except Exception as plant_error:
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
-    # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
-    )
-    db.add(analysis_task)
-    await db.commit()
-    await db.refresh(analysis_task)
+    # 根据 auto_analysis 参数决定是否创建分析任务
+    auto_analysis = task_input.get("auto_analysis", True)
+    auto_create_foreshadow = task_input.get("auto_create_foreshadow", True)
+    
+    if auto_analysis:
+        analysis_task = AnalysisTask(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            status='pending',
+            progress=0
+        )
+        db.add(analysis_task)
+        await db.commit()
+        await db.refresh(analysis_task)
 
-    logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
 
-    await tracker.set_result({
-        "chapter_id": chapter_id,
-        "word_count": new_word_count,
-        "analysis_task_id": analysis_task.id,
-    })
-    await tracker.analyzing(0, "章节创作完成，准备分析...")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": analysis_task.id,
+        })
+        await tracker.analyzing(0, "章节创作完成，准备分析...")
 
-    analysis_success = await analyze_chapter_background(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        task_id=analysis_task.id,
-        ai_service=ai_service,
-        progress_callback=tracker.analyzing,
-    )
-    if not analysis_success:
-        raise RuntimeError("章节内容已生成，但章节分析失败")
+        analysis_success = await analyze_chapter_background(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            task_id=analysis_task.id,
+            ai_service=ai_service,
+            progress_callback=tracker.analyzing,
+            auto_create_foreshadow=auto_create_foreshadow,
+        )
+        if not analysis_success:
+            raise RuntimeError("章节内容已生成，但章节分析失败")
 
-    # === 完成 ===
-    await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+        # === 完成 ===
+        await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+    else:
+        logger.info("⏭️ 后台生成：已跳过自动分析（auto_analysis=False）")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": None,
+        })
+        await tracker.complete(f"创作完成！（已跳过分析）共 {new_word_count} 字")
 
 
 def _build_analysis_task_status_payload(
@@ -3673,6 +3797,7 @@ async def batch_generate_chapters_in_order(
     )
     
     logger.info(f"📦 创建批量生成任务: {batch_id}, 章节: 第{start_number}-{end_number}章, 预估耗时: {estimated_time}分钟")
+    _log_reference_params(batch_request.reference_chapter_ids, None)
     
     # 启动后台批量生成任务，传递model参数和skill_key
     background_tasks.add_task(
@@ -3683,7 +3808,9 @@ async def batch_generate_chapters_in_order(
         custom_model=batch_request.model,
         skill_key=batch_request.skill_key,
         enable_mcp=batch_request.enable_mcp,
-        narrative_perspective=batch_request.narrative_perspective
+        narrative_perspective=batch_request.narrative_perspective,
+        auto_create_foreshadow=batch_request.auto_create_foreshadow,
+        reference_chapter_ids=batch_request.reference_chapter_ids
     )
     
     return BatchGenerateResponse(
@@ -3833,7 +3960,9 @@ async def execute_batch_generation_in_order(
     custom_model: Optional[str] = None,
     skill_key: Optional[str] = None,
     enable_mcp: bool = True,
-    narrative_perspective: Optional[str] = None
+    narrative_perspective: Optional[str] = None,
+    auto_create_foreshadow: bool = True,
+    reference_chapter_ids: Optional[List[str]] = None
 ):
     """
     按顺序执行批量生成任务（后台任务）
@@ -3957,7 +4086,8 @@ async def execute_batch_generation_in_order(
                         skill_key=skill_key,
                         batch_id=batch_id,
                         enable_mcp=enable_mcp,
-                        temp_narrative_perspective=narrative_perspective
+                        temp_narrative_perspective=narrative_perspective,
+                        reference_chapter_ids=reference_chapter_ids
                     )
 
                     await db_session.refresh(task)
@@ -3996,7 +4126,8 @@ async def execute_batch_generation_in_order(
                             chapter_id=chapter_id,
                             user_id=user_id,
                             project_id=task.project_id,
-                            task_id=analysis_task.id
+                            task_id=analysis_task.id,
+                            auto_create_foreshadow=auto_create_foreshadow
                         )
 
                         if not analysis_result:
@@ -4131,7 +4262,8 @@ async def generate_single_chapter_for_batch(
     skill_key: Optional[str] = None,
     batch_id: Optional[str] = None,
     enable_mcp: bool = True,
-    temp_narrative_perspective: Optional[str] = None
+    temp_narrative_perspective: Optional[str] = None,
+    reference_chapter_ids: Optional[List[str]] = None
 ) -> Optional[str]:
     """
     为批量生成执行单个章节的生成（非流式）
@@ -4191,7 +4323,8 @@ async def generate_single_chapter_for_batch(
             outline=outline,
             user_id=user_id,
             db=db_session,
-            target_word_count=target_word_count
+            target_word_count=target_word_count,
+            reference_chapter_ids=reference_chapter_ids
         )
     else:
         # 1-N模式：使用独立的完整构建器
@@ -4208,7 +4341,8 @@ async def generate_single_chapter_for_batch(
             db=db_session,
             style_content=style_content,
             target_word_count=target_word_count,
-            temp_narrative_perspective=temp_narrative_perspective
+            temp_narrative_perspective=temp_narrative_perspective,
+            reference_chapter_ids=reference_chapter_ids
         )
     
     # 日志输出统计信息
@@ -4401,8 +4535,7 @@ async def generate_single_chapter_for_batch(
         new_word_count = len(full_content)
         chapter.word_count = new_word_count
         chapter.status = "completed"
-        chapter.summary = _build_lightweight_chapter_summary(full_content)
-        
+
         # 更新项目字数
         project.current_words = project.current_words - old_word_count + new_word_count
         
@@ -4469,16 +4602,22 @@ async def regenerate_chapter_stream(
     user_id = getattr(request.state, 'user_id', None)
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录")
-    
+
+    # 记录参考参数（前向兼容：重新生成流程暂不依赖章节上下文服务，仅记录）
+    _log_reference_params(
+        regenerate_request.reference_chapter_ids,
+        regenerate_request.reference_foreshadow_ids,
+    )
+
     # 验证章节存在
     chapter_result = await db.execute(
         select(Chapter).where(Chapter.id == chapter_id)
     )
     chapter = chapter_result.scalar_one_or_none()
-    
+
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
-    
+
     if not chapter.content or chapter.content.strip() == "":
         raise HTTPException(status_code=400, detail="章节内容为空，无法重新生成")
     

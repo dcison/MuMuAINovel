@@ -254,7 +254,9 @@ class OneToManyContextBuilder:
         db: AsyncSession,
         style_content: Optional[str] = None,
         target_word_count: int = 3000,
-        temp_narrative_perspective: Optional[str] = None
+        temp_narrative_perspective: Optional[str] = None,
+        reference_chapter_ids: Optional[List[str]] = None,
+        reference_foreshadow_ids: Optional[List[str]] = None
     ) -> OneToManyContext:
         """
         构建章节生成所需的上下文（1-N模式）
@@ -268,12 +270,17 @@ class OneToManyContextBuilder:
             style_content: 写作风格内容（可选，不再使用，保留参数兼容性）
             target_word_count: 目标字数
             temp_narrative_perspective: 临时叙事视角（可选，覆盖项目默认）
+            reference_chapter_ids: 用户选择的前置参考章节ID列表，为空则自动包含所有前置章节
+            reference_foreshadow_ids: 用户选择的伏笔ID列表，为空则自动包含所有伏笔
         
         Returns:
             OneToManyContext: 结构化的上下文对象
         """
         chapter_number = chapter.chapter_number
-        logger.info(f"📝 [1-N模式] 开始构建章节上下文: 第{chapter_number}章")
+        if reference_chapter_ids:
+            logger.info(f"📝 [1-N模式] 开始构建章节上下文: 第{chapter_number}章 (用户指定参考章节: {len(reference_chapter_ids)}个)")
+        else:
+            logger.info(f"📝 [1-N模式] 开始构建章节上下文: 第{chapter_number}章")
         
         # 确定叙事视角
         narrative_perspective = (
@@ -298,10 +305,10 @@ class OneToManyContextBuilder:
         # === P0-核心信息（始终构建）===
         context.chapter_outline = self._build_chapter_outline_1n(chapter, outline)
         
-        # === 最近10章expansion_plan摘要 ===
+        # === 最近章节expansion_plan摘要（受 reference_chapter_ids 过滤）===
         if chapter_number > 1:
             context.recent_chapters_context = await self._build_recent_chapters_context(
-                chapter, project.id, db
+                chapter, project.id, db, reference_chapter_ids
             )
             logger.info(f"  ✅ 最近章节规划: {len(context.recent_chapters_context or '')}字符")
         
@@ -313,7 +320,7 @@ class OneToManyContextBuilder:
             logger.info("  ✅ 第1章无需衔接锚点")
         else:
             ending_info = await self._get_last_ending_enhanced(
-                chapter, db, self.ENDING_LENGTH
+                chapter, db, self.ENDING_LENGTH, reference_chapter_ids
             )
             context.continuation_point = ending_info.get('ending_text')
             context.previous_chapter_summary = ending_info.get('summary')
@@ -335,14 +342,14 @@ class OneToManyContextBuilder:
         if self.memory_service:
             context.relevant_memories = await self._get_relevant_memories_enhanced(
                 user_id, project.id, chapter,
-                context.chapter_outline, db
+                context.chapter_outline, db, reference_chapter_ids
             )
             logger.info(f"  ✅ 相关记忆: {len(context.relevant_memories or '')}字符")
         
         # === P2-伏笔提醒===
         if self.foreshadow_service:
             context.foreshadow_reminders = await self._get_foreshadow_reminders(
-                project.id, chapter_number, db
+                project.id, chapter_number, db, reference_chapter_ids, reference_foreshadow_ids
             )
             if context.foreshadow_reminders:
                 logger.info(f"  ✅ 伏笔提醒: {len(context.foreshadow_reminders)}字符")
@@ -362,6 +369,20 @@ class OneToManyContextBuilder:
         }
         
         logger.info(f"📊 [1-N模式] 上下文构建完成: 总长度 {context.context_stats['total_length']} 字符")
+        
+        # === 完整上下文日志（调试用）===
+        def _preview(s, n=300):
+            if not s: return '(空)'
+            return s[:n].replace('\n', '\\n')
+        
+        logger.info(f"📋 [上下文] 大纲: {_preview(context.chapter_outline)}")
+        logger.info(f"📋 [上下文] 最近章节摘要: {_preview(context.recent_chapters_context)}")
+        logger.info(f"📋 [上下文] 衔接锚点: {_preview(context.continuation_point)}")
+        logger.info(f"📋 [上下文] 角色信息: {_preview(context.chapter_characters)}")
+        logger.info(f"📋 [上下文] 职业信息: {_preview(context.chapter_careers)}")
+        logger.info(f"📋 [上下文] 相关记忆: {_preview(context.relevant_memories)}")
+        logger.info(f"📋 [上下文] 伏笔提醒: {_preview(context.foreshadow_reminders)}")
+        logger.info(f"📋 [上下文] 以上为完整上下文预览 (总{context.context_stats['total_length']}字符)")
         
         return context
     
@@ -669,17 +690,21 @@ class OneToManyContextBuilder:
         self,
         chapter: Chapter,
         project_id: str,
-        db: AsyncSession
+        db: AsyncSession,
+        reference_chapter_ids: Optional[List[str]] = None
     ) -> Optional[str]:
-        """构建最近10章的expansion_plan摘要"""
+        """构建最近章节的expansion_plan摘要（受 reference_chapter_ids 过滤）"""
         try:
-            result = await db.execute(
+            query = (
                 select(Chapter.id, Chapter.chapter_number, Chapter.title, Chapter.expansion_plan, Chapter.summary)
                 .where(Chapter.project_id == project_id)
                 .where(Chapter.chapter_number < chapter.chapter_number)
-                .order_by(Chapter.chapter_number.desc())
-                .limit(self.RECENT_CHAPTERS_COUNT)
             )
+            if reference_chapter_ids:
+                query = query.where(Chapter.id.in_(reference_chapter_ids))
+                logger.info(f"  📋 [1-N] 使用用户指定的 {len(reference_chapter_ids)} 个参考章节")
+            query = query.order_by(Chapter.chapter_number.desc()).limit(self.RECENT_CHAPTERS_COUNT)
+            result = await db.execute(query)
             recent_chapters = result.all()
             
             if not recent_chapters:
@@ -688,7 +713,10 @@ class OneToManyContextBuilder:
             # 按章节号正序排列
             recent_chapters = sorted(recent_chapters, key=lambda x: x[1])
 
+            # 记录实际使用的章节
             chapter_ids = [row[0] for row in recent_chapters]
+            chapter_details = [(row[0][:8], row[1], row[2]) for row in recent_chapters]
+            logger.info(f"  📋 [1-N] 实际参考章节: {chapter_details}")
             summary_map: Dict[str, str] = {}
             analysis_map: Dict[str, Any] = {}
             if chapter_ids:
@@ -755,7 +783,8 @@ class OneToManyContextBuilder:
         project_id: str,
         chapter: Chapter,
         chapter_outline: str,
-        db: AsyncSession
+        db: AsyncSession,
+        reference_chapter_ids: Optional[List[str]] = None
     ) -> Optional[str]:
         """获取相关记忆（优先使用1-N expansion_plan中的人物、事件、目标和冲突）。"""
         if not self.memory_service:
@@ -766,13 +795,24 @@ class OneToManyContextBuilder:
             query_text = self._build_memory_query_from_expansion_plan(chapter, chapter_outline)
             logger.info(f"  🔍 [1-N] 结构化记忆查询: {query_text[:180]}...")
             
+            # 根据 reference_chapter_ids 限制记忆搜索范围
+            if reference_chapter_ids:
+                ch_nums = await self._get_chapter_numbers_by_ids(reference_chapter_ids, db)
+                if ch_nums:
+                    mem_range = (min(ch_nums), max(ch_nums))
+                    logger.info(f"  🔍 [1-N] 记忆搜索范围限制为: 第{mem_range[0]}-{mem_range[1]}章")
+                else:
+                    mem_range = (1, max(0, chapter_number - 1))
+            else:
+                mem_range = (1, max(0, chapter_number - 1))
+            
             relevant_memories = await self.memory_service.search_memories(
                 user_id=user_id,
                 project_id=project_id,
                 query=query_text,
                 limit=self.MEMORY_CANDIDATE_LIMIT,
                 min_importance=0.0,
-                chapter_range=(1, max(0, chapter_number - 1))
+                chapter_range=mem_range
             )
             
             filtered_memories = _select_memories_with_fallback(
@@ -796,6 +836,23 @@ class OneToManyContextBuilder:
         except Exception as e:
             logger.error(f"❌ 获取相关记忆失败: {str(e)}")
             return None
+    
+    async def _get_chapter_numbers_by_ids(
+        self,
+        chapter_ids: List[str],
+        db: AsyncSession
+    ) -> List[int]:
+        """根据章节ID列表查询对应的章节号"""
+        try:
+            result = await db.execute(
+                select(Chapter.chapter_number)
+                .where(Chapter.id.in_(chapter_ids))
+                .order_by(Chapter.chapter_number)
+            )
+            return [row[0] for row in result.all()]
+        except Exception as e:
+            logger.error(f"❌ 查询章节号失败: {str(e)}")
+            return []
     
     def _build_memory_query_from_expansion_plan(
         self,
@@ -826,9 +883,14 @@ class OneToManyContextBuilder:
         self,
         chapter: Chapter,
         db: AsyncSession,
-        max_length: Optional[int]
+        max_length: Optional[int],
+        reference_chapter_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        """获取增强版衔接锚点（含上一章完整正文、摘要和关键事件）"""
+        """获取增强版衔接锚点（含上一章完整正文、摘要和关键事件）
+        
+        当 reference_chapter_ids 指定时，从中选择序号最大的章节作为衔接锚点；
+        否则自动取上一章。
+        """
         result_info = {
             'ending_text': None,
             'summary': None,
@@ -838,15 +900,26 @@ class OneToManyContextBuilder:
         if chapter.chapter_number <= 1:
             return result_info
         
-        # 查询上一章：不假设序号连续，取 chapter_number < 当前章 中最大的
-        result = await db.execute(
-            select(Chapter)
-            .where(Chapter.project_id == chapter.project_id)
-            .where(Chapter.chapter_number < chapter.chapter_number)
-            .order_by(Chapter.chapter_number.desc())
-            .limit(1)
-        )
-        prev_chapter = result.scalar_one_or_none()
+        # 查询上一章：优先使用 reference_chapter_ids 中序号最大的章节，否则自动取上一章
+        if reference_chapter_ids:
+            result = await db.execute(
+                select(Chapter)
+                .where(Chapter.id.in_(reference_chapter_ids))
+                .order_by(Chapter.chapter_number.desc())
+                .limit(1)
+            )
+            prev_chapter = result.scalar_one_or_none()
+            if prev_chapter:
+                logger.info(f"  📋 [1-N] 衔接锚点使用用户指定章节: 第{prev_chapter.chapter_number}章《{prev_chapter.title}》")
+        else:
+            result = await db.execute(
+                select(Chapter)
+                .where(Chapter.project_id == chapter.project_id)
+                .where(Chapter.chapter_number < chapter.chapter_number)
+                .order_by(Chapter.chapter_number.desc())
+                .limit(1)
+            )
+            prev_chapter = result.scalar_one_or_none()
         
         if not prev_chapter:
             return result_info
@@ -986,7 +1059,9 @@ class OneToManyContextBuilder:
         self,
         project_id: str,
         chapter_number: int,
-        db: AsyncSession
+        db: AsyncSession,
+        reference_chapter_ids: Optional[List[str]] = None,
+        reference_foreshadow_ids: Optional[List[str]] = None
     ) -> Optional[str]:
         """
         获取伏笔提醒信息（增强版）
@@ -1000,6 +1075,18 @@ class OneToManyContextBuilder:
             return None
         
         try:
+            # 根据 reference_chapter_ids 过滤伏笔（只保留埋入章节在范围内的）
+            allowed_nums = None
+            if reference_chapter_ids:
+                allowed_nums = set(await self._get_chapter_numbers_by_ids(reference_chapter_ids, db))
+                logger.info(f"  🔍 伏笔过滤: 仅保留埋入章节在 {sorted(allowed_nums)} 的伏笔")
+            
+            # 根据 reference_foreshadow_ids 过滤伏笔（只保留指定ID的伏笔）
+            allowed_foreshadow_ids = None
+            if reference_foreshadow_ids is not None and len(reference_foreshadow_ids) > 0:
+                allowed_foreshadow_ids = set(reference_foreshadow_ids)
+                logger.info(f"  🔍 伏笔ID过滤: 仅保留 {len(allowed_foreshadow_ids)} 个指定伏笔")
+            
             lines = []
             
             # 1. 本章必须回收的伏笔
@@ -1010,14 +1097,19 @@ class OneToManyContextBuilder:
             )
             
             if must_resolve:
-                lines.append("【🎯 本章必须回收的伏笔】")
-                for f in must_resolve:
-                    lines.append(f"- {f.title}")
-                    lines.append(f"  埋入章节：第{f.plant_chapter_number}章")
-                    lines.append(f"  伏笔内容：{f.content[:100]}{'...' if len(f.content) > 100 else ''}")
-                    if f.resolution_notes:
-                        lines.append(f"  回收提示：{f.resolution_notes}")
-                    lines.append("")
+                if allowed_nums is not None:
+                    must_resolve = [f for f in must_resolve if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    must_resolve = [f for f in must_resolve if f.id in allowed_foreshadow_ids]
+                if must_resolve:
+                    lines.append("【🎯 本章必须回收的伏笔】")
+                    for f in must_resolve:
+                        lines.append(f"- {f.title}")
+                        lines.append(f"  埋入章节：第{f.plant_chapter_number}章")
+                        lines.append(f"  伏笔内容：{f.content[:100]}{'...' if len(f.content) > 100 else ''}")
+                        if f.resolution_notes:
+                            lines.append(f"  回收提示：{f.resolution_notes}")
+                        lines.append("")
             
             # 2. 超期未回收的伏笔
             overdue = await self.foreshadow_service.get_overdue_foreshadows(
@@ -1027,13 +1119,18 @@ class OneToManyContextBuilder:
             )
             
             if overdue:
-                lines.append("【⚠️ 超期待回收伏笔】")
-                for f in overdue[:3]:  # 最多显示3个
-                    overdue_chapters = chapter_number - (f.target_resolve_chapter_number or 0)
-                    lines.append(f"- {f.title} [已超期{overdue_chapters}章]")
-                    lines.append(f"  埋入章节：第{f.plant_chapter_number}章，原计划第{f.target_resolve_chapter_number}章回收")
-                    lines.append(f"  伏笔内容：{f.content[:80]}...")
-                    lines.append("")
+                if allowed_nums is not None:
+                    overdue = [f for f in overdue if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    overdue = [f for f in overdue if f.id in allowed_foreshadow_ids]
+                if overdue:
+                    lines.append("【⚠️ 超期待回收伏笔】")
+                    for f in overdue[:3]:
+                        overdue_chapters = chapter_number - (f.target_resolve_chapter_number or 0)
+                        lines.append(f"- {f.title} [已超期{overdue_chapters}章]")
+                        lines.append(f"  埋入章节：第{f.plant_chapter_number}章，原计划第{f.target_resolve_chapter_number}章回收")
+                        lines.append(f"  伏笔内容：{f.content[:80]}...")
+                        lines.append("")
             
             # 3. 即将到期的伏笔（未来3章内）
             upcoming = await self.foreshadow_service.get_pending_resolve_foreshadows(
@@ -1048,11 +1145,16 @@ class OneToManyContextBuilder:
                                if (f.target_resolve_chapter_number or 0) > chapter_number]
             
             if upcoming_filtered:
-                lines.append("【📋 即将到期的伏笔（仅供参考）】")
-                for f in upcoming_filtered[:3]:  # 最多显示3个
-                    remaining = (f.target_resolve_chapter_number or 0) - chapter_number
-                    lines.append(f"- {f.title}（计划第{f.target_resolve_chapter_number}章回收，还有{remaining}章）")
-                lines.append("")
+                if allowed_nums is not None:
+                    upcoming_filtered = [f for f in upcoming_filtered if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    upcoming_filtered = [f for f in upcoming_filtered if f.id in allowed_foreshadow_ids]
+                if upcoming_filtered:
+                    lines.append("【📋 即将到期的伏笔（仅供参考）】")
+                    for f in upcoming_filtered[:3]:
+                        remaining = (f.target_resolve_chapter_number or 0) - chapter_number
+                        lines.append(f"- {f.title}（计划第{f.target_resolve_chapter_number}章回收，还有{remaining}章）")
+                    lines.append("")
             
             return "\n".join(lines) if lines else None
             
@@ -1152,11 +1254,13 @@ class OneToOneContextBuilder:
         outline: Optional[Outline],
         user_id: str,
         db: AsyncSession,
-        target_word_count: int = 3000
+        target_word_count: int = 3000,
+        reference_chapter_ids: Optional[List[str]] = None,
+        reference_foreshadow_ids: Optional[List[str]] = None
     ) -> OneToOneContext:
         """
         构建1-1模式上下文
-        
+
         Args:
             chapter: 章节对象
             project: 项目对象
@@ -1164,12 +1268,17 @@ class OneToOneContextBuilder:
             user_id: 用户ID
             db: 数据库会话
             target_word_count: 目标字数
+            reference_chapter_ids: 用户选择的前置参考章节ID列表，为空则自动包含所有前置章节
+            reference_foreshadow_ids: 用户选择的伏笔ID列表，为空则自动包含所有伏笔
             
         Returns:
             OneToOneContext: 上下文对象
         """
         chapter_number = chapter.chapter_number
-        logger.info(f"📝 [1-1模式] 开始构建上下文: 第{chapter_number}章")
+        if reference_chapter_ids:
+            logger.info(f"📝 [1-1模式] 开始构建上下文: 第{chapter_number}章 (用户指定参考章节: {len(reference_chapter_ids)}个)")
+        else:
+            logger.info(f"📝 [1-1模式] 开始构建上下文: 第{chapter_number}章")
         
         # 初始化上下文
         context = OneToOneContext(
@@ -1189,24 +1298,35 @@ class OneToOneContextBuilder:
         logger.info(f"  ✅ P0-大纲信息: {len(context.chapter_outline)}字符")
         
         # === P1-重要信息 ===
-        # 0. 最近N章剧情摘要窗口
+        # 0. 最近N章剧情摘要窗口（受 reference_chapter_ids 过滤）
         if chapter_number > 1:
             context.recent_chapters_context = await self._build_recent_chapters_context(
-                chapter, project.id, db
+                chapter, project.id, db, reference_chapter_ids
             )
             logger.info(f"  ✅ P1-最近章节摘要: {len(context.recent_chapters_context or '')}字符")
 
         # 1. 获取上一章完整正文和上一章摘要
         if chapter_number > 1:
-            # 查找前一章：不假设序号连续，取 chapter_number < 当前章 中最大的
-            prev_chapter_result = await db.execute(
-                select(Chapter)
-                .where(Chapter.project_id == chapter.project_id)
-                .where(Chapter.chapter_number < chapter_number)
-                .order_by(Chapter.chapter_number.desc())
-                .limit(1)
-            )
-            prev_chapter = prev_chapter_result.scalar_one_or_none()
+            # 优先使用 reference_chapter_ids 中序号最大的章节，否则自动取上一章
+            if reference_chapter_ids:
+                prev_chapter_result = await db.execute(
+                    select(Chapter)
+                    .where(Chapter.id.in_(reference_chapter_ids))
+                    .order_by(Chapter.chapter_number.desc())
+                    .limit(1)
+                )
+                prev_chapter = prev_chapter_result.scalar_one_or_none()
+                if prev_chapter:
+                    logger.info(f"  📋 [1-1] 衔接锚点使用用户指定章节: 第{prev_chapter.chapter_number}章《{prev_chapter.title}》")
+            else:
+                prev_chapter_result = await db.execute(
+                    select(Chapter)
+                    .where(Chapter.project_id == chapter.project_id)
+                    .where(Chapter.chapter_number < chapter_number)
+                    .order_by(Chapter.chapter_number.desc())
+                    .limit(1)
+                )
+                prev_chapter = prev_chapter_result.scalar_one_or_none()
             
             if prev_chapter and prev_chapter.content:
                 content = prev_chapter.content.strip()
@@ -1290,7 +1410,7 @@ class OneToOneContextBuilder:
         # 1. 伏笔提醒
         if self.foreshadow_service:
             context.foreshadow_reminders = await self._get_foreshadow_reminders(
-                project.id, chapter_number, db
+                project.id, chapter_number, db, reference_chapter_ids, reference_foreshadow_ids
             )
             if context.foreshadow_reminders:
                 logger.info(f"  ✅ P2-伏笔提醒: {len(context.foreshadow_reminders)}字符")
@@ -1356,24 +1476,41 @@ class OneToOneContextBuilder:
         }
         
         logger.info(f"📊 [1-1模式] 上下文构建完成: 总长度 {context.context_stats['total_length']} 字符")
-        
+
+        # === 完整上下文日志（调试用）===
+        def _preview(s, n=300):
+            if not s: return '(空)'
+            return s[:n].replace('\n', '\\n')
+
+        logger.info(f"📋 [上下文] 大纲: {_preview(context.chapter_outline)}")
+        logger.info(f"📋 [上下文] 最近章节摘要: {_preview(context.recent_chapters_context)}")
+        logger.info(f"📋 [上下文] 衔接锚点: {_preview(context.continuation_point)}")
+        logger.info(f"📋 [上下文] 角色信息: {_preview(context.chapter_characters)}")
+        logger.info(f"📋 [上下文] 相关记忆: {_preview(context.relevant_memories)}")
+        logger.info(f"📋 [上下文] 伏笔提醒: {_preview(context.foreshadow_reminders)}")
+        logger.info(f"📋 [上下文] 以上为完整上下文预览 (总{context.context_stats['total_length']}字符)")
+
         return context
     
     async def _build_recent_chapters_context(
         self,
         chapter: Chapter,
         project_id: str,
-        db: AsyncSession
+        db: AsyncSession,
+        reference_chapter_ids: Optional[List[str]] = None
     ) -> Optional[str]:
-        """构建最近N章剧情摘要窗口（1-1模式）。"""
+        """构建最近N章剧情摘要窗口（1-1模式，受 reference_chapter_ids 过滤）。"""
         try:
-            result = await db.execute(
+            query = (
                 select(Chapter.id, Chapter.chapter_number, Chapter.title, Chapter.summary)
                 .where(Chapter.project_id == project_id)
                 .where(Chapter.chapter_number < chapter.chapter_number)
-                .order_by(Chapter.chapter_number.desc())
-                .limit(self.RECENT_CHAPTERS_COUNT)
             )
+            if reference_chapter_ids:
+                query = query.where(Chapter.id.in_(reference_chapter_ids))
+                logger.info(f"  📋 [1-1] 使用用户指定的 {len(reference_chapter_ids)} 个参考章节")
+            query = query.order_by(Chapter.chapter_number.desc()).limit(self.RECENT_CHAPTERS_COUNT)
+            result = await db.execute(query)
             recent_chapters = result.all()
 
             if not recent_chapters:
@@ -1794,7 +1931,9 @@ class OneToOneContextBuilder:
         self,
         project_id: str,
         chapter_number: int,
-        db: AsyncSession
+        db: AsyncSession,
+        reference_chapter_ids: Optional[List[str]] = None,
+        reference_foreshadow_ids: Optional[List[str]] = None
     ) -> Optional[str]:
         """
         获取伏笔提醒信息（增强版）
@@ -1808,6 +1947,18 @@ class OneToOneContextBuilder:
             return None
         
         try:
+            # 根据 reference_chapter_ids 过滤伏笔（只保留埋入章节在范围内的）
+            allowed_nums = None
+            if reference_chapter_ids:
+                allowed_nums = set(await self._get_chapter_numbers_by_ids(reference_chapter_ids, db))
+                logger.info(f"  🔍 伏笔过滤: 仅保留埋入章节在 {sorted(allowed_nums)} 的伏笔")
+            
+            # 根据 reference_foreshadow_ids 过滤伏笔（只保留指定ID的伏笔）
+            allowed_foreshadow_ids = None
+            if reference_foreshadow_ids is not None and len(reference_foreshadow_ids) > 0:
+                allowed_foreshadow_ids = set(reference_foreshadow_ids)
+                logger.info(f"  🔍 伏笔ID过滤: 仅保留 {len(allowed_foreshadow_ids)} 个指定伏笔")
+            
             lines = []
             
             # 1. 本章必须回收的伏笔
@@ -1818,14 +1969,19 @@ class OneToOneContextBuilder:
             )
             
             if must_resolve:
-                lines.append("【🎯 本章必须回收的伏笔】")
-                for f in must_resolve:
-                    lines.append(f"- {f.title}")
-                    lines.append(f"  埋入章节：第{f.plant_chapter_number}章")
-                    lines.append(f"  伏笔内容：{f.content[:100]}{'...' if len(f.content) > 100 else ''}")
-                    if f.resolution_notes:
-                        lines.append(f"  回收提示：{f.resolution_notes}")
-                    lines.append("")
+                if allowed_nums is not None:
+                    must_resolve = [f for f in must_resolve if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    must_resolve = [f for f in must_resolve if f.id in allowed_foreshadow_ids]
+                if must_resolve:
+                    lines.append("【🎯 本章必须回收的伏笔】")
+                    for f in must_resolve:
+                        lines.append(f"- {f.title}")
+                        lines.append(f"  埋入章节：第{f.plant_chapter_number}章")
+                        lines.append(f"  伏笔内容：{f.content[:100]}{'...' if len(f.content) > 100 else ''}")
+                        if f.resolution_notes:
+                            lines.append(f"  回收提示：{f.resolution_notes}")
+                        lines.append("")
             
             # 2. 超期未回收的伏笔
             overdue = await self.foreshadow_service.get_overdue_foreshadows(
@@ -1835,13 +1991,18 @@ class OneToOneContextBuilder:
             )
             
             if overdue:
-                lines.append("【⚠️ 超期待回收伏笔】")
-                for f in overdue[:3]:  # 最多显示3个
-                    overdue_chapters = chapter_number - (f.target_resolve_chapter_number or 0)
-                    lines.append(f"- {f.title} [已超期{overdue_chapters}章]")
-                    lines.append(f"  埋入章节：第{f.plant_chapter_number}章，原计划第{f.target_resolve_chapter_number}章回收")
-                    lines.append(f"  伏笔内容：{f.content[:80]}...")
-                    lines.append("")
+                if allowed_nums is not None:
+                    overdue = [f for f in overdue if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    overdue = [f for f in overdue if f.id in allowed_foreshadow_ids]
+                if overdue:
+                    lines.append("【⚠️ 超期待回收伏笔】")
+                    for f in overdue[:3]:
+                        overdue_chapters = chapter_number - (f.target_resolve_chapter_number or 0)
+                        lines.append(f"- {f.title} [已超期{overdue_chapters}章]")
+                        lines.append(f"  埋入章节：第{f.plant_chapter_number}章，原计划第{f.target_resolve_chapter_number}章回收")
+                        lines.append(f"  伏笔内容：{f.content[:80]}...")
+                        lines.append("")
             
             # 3. 即将到期的伏笔（未来3章内）
             upcoming = await self.foreshadow_service.get_pending_resolve_foreshadows(
@@ -1856,11 +2017,16 @@ class OneToOneContextBuilder:
                                if (f.target_resolve_chapter_number or 0) > chapter_number]
             
             if upcoming_filtered:
-                lines.append("【📋 即将到期的伏笔（仅供参考）】")
-                for f in upcoming_filtered[:3]:  # 最多显示3个
-                    remaining = (f.target_resolve_chapter_number or 0) - chapter_number
-                    lines.append(f"- {f.title}（计划第{f.target_resolve_chapter_number}章回收，还有{remaining}章）")
-                lines.append("")
+                if allowed_nums is not None:
+                    upcoming_filtered = [f for f in upcoming_filtered if f.plant_chapter_number in allowed_nums]
+                if allowed_foreshadow_ids is not None:
+                    upcoming_filtered = [f for f in upcoming_filtered if f.id in allowed_foreshadow_ids]
+                if upcoming_filtered:
+                    lines.append("【📋 即将到期的伏笔（仅供参考）】")
+                    for f in upcoming_filtered[:3]:
+                        remaining = (f.target_resolve_chapter_number or 0) - chapter_number
+                        lines.append(f"- {f.title}（计划第{f.target_resolve_chapter_number}章回收，还有{remaining}章）")
+                    lines.append("")
             
             return "\n".join(lines) if lines else None
             

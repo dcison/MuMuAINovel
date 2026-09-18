@@ -26,6 +26,8 @@ export default function WorldSetting() {
     location: string;
     atmosphere: string;
     rules: string;
+    climate?: string;
+    clothing?: string;
   } | null>(null);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [modal, contextHolder] = Modal.useModal();
@@ -59,13 +61,15 @@ export default function WorldSetting() {
                 // 可以在这里显示生成的内容片段（可选）
                 console.log('生成片段:', chunk);
               },
-              onResult: (result: { time_period: string; location: string; atmosphere: string; rules: string }) => {
+              onResult: (result: { time_period: string; location: string; atmosphere: string; rules: string; climate?: string; clothing?: string }) => {
                 // 保存新生成的数据
                 const newData = {
                   time_period: result.time_period,
                   location: result.location,
                   atmosphere: result.atmosphere,
                   rules: result.rules,
+                  climate: result.climate || '',
+                  clothing: result.clothing || '',
                 };
                 setNewWorldData(newData);
               },
@@ -104,6 +108,8 @@ export default function WorldSetting() {
         world_location: newWorldData.location,
         world_atmosphere: newWorldData.atmosphere,
         world_rules: newWorldData.rules,
+        world_climate: newWorldData.climate,
+        world_clothing: newWorldData.clothing,
       });
 
       setCurrentProject(updatedProject);
@@ -131,7 +137,9 @@ export default function WorldSetting() {
   const hasWorldSetting = currentProject.world_time_period ||
     currentProject.world_location ||
     currentProject.world_atmosphere ||
-    currentProject.world_rules;
+    currentProject.world_rules ||
+    currentProject.world_climate ||
+    currentProject.world_clothing;
 
   if (!hasWorldSetting) {
     return (
@@ -232,6 +240,8 @@ export default function WorldSetting() {
                   world_location: currentProject.world_location || '',
                   world_atmosphere: currentProject.world_atmosphere || '',
                   world_rules: currentProject.world_rules || '',
+                  world_climate: currentProject.world_climate || '',
+                  world_clothing: currentProject.world_clothing || '',
                 });
                 setIsEditModalVisible(true);
               }}
@@ -340,6 +350,42 @@ export default function WorldSetting() {
               </div>
             )}
 
+            {currentProject.world_climate && (
+              <div style={{ marginBottom: 24 }}>
+                <Title level={5} style={{ color: '#1890ff', marginBottom: 12 }}>
+                  气候设定
+                </Title>
+                <Paragraph style={{
+                  fontSize: 15,
+                  lineHeight: 1.8,
+                  padding: 16,
+                  background: token.colorBgLayout,
+                  borderRadius: 8,
+                  borderLeft: `4px solid #1890ff`
+                }}>
+                  {currentProject.world_climate}
+                </Paragraph>
+              </div>
+            )}
+
+            {currentProject.world_clothing && (
+              <div style={{ marginBottom: 24 }}>
+                <Title level={5} style={{ color: '#722ed1', marginBottom: 12 }}>
+                  服装设定
+                </Title>
+                <Paragraph style={{
+                  fontSize: 15,
+                  lineHeight: 1.8,
+                  padding: 16,
+                  background: token.colorBgLayout,
+                  borderRadius: 8,
+                  borderLeft: `4px solid #722ed1`
+                }}>
+                  {currentProject.world_clothing}
+                </Paragraph>
+              </div>
+            )}
+
             {currentProject.world_rules && (
               <div style={{ marginBottom: 0 }}>
                 <Title level={5} style={{ color: token.colorError, marginBottom: 12 }}>
@@ -380,6 +426,8 @@ export default function WorldSetting() {
               world_location: values.world_location,
               world_atmosphere: values.world_atmosphere,
               world_rules: values.world_rules,
+              world_climate: values.world_climate,
+              world_clothing: values.world_clothing,
             });
 
             setCurrentProject(updatedProject);
@@ -450,6 +498,30 @@ export default function WorldSetting() {
             <TextArea
               rows={4}
               placeholder="描述这个世界的特殊规则和设定..."
+              showCount
+              maxLength={1000}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="气候设定"
+            name="world_climate"
+          >
+            <TextArea
+              rows={4}
+              placeholder="描述世界的气候特征，如温度、降水、季节变化等..."
+              showCount
+              maxLength={1000}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="服装设定"
+            name="world_clothing"
+          >
+            <TextArea
+              rows={4}
+              placeholder="描述适应气候和地点的服装风格，如材质、款式、特色等..."
               showCount
               maxLength={1000}
             />

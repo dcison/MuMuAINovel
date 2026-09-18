@@ -119,9 +119,13 @@ class ChapterGenerateRequest(BaseModel):
         le=10000  # 最大10000字
     )
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索参考资料）")
+    auto_analysis: bool = Field(True, description="是否自动分析章节内容（创建分析任务）")
+    auto_create_foreshadow: bool = Field(True, description="分析时是否自动创建伏笔")
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    reference_chapter_ids: Optional[List[str]] = Field(None, description="指定作为上下文参考的前置章节ID列表，为空则自动包含所有前置章节")
+    reference_foreshadow_ids: Optional[List[str]] = Field(None, description="指定作为上下文参考的伏笔ID列表，为空则自动包含所有伏笔")
 
 
 class BatchGenerateRequest(BaseModel):
@@ -136,11 +140,13 @@ class BatchGenerateRequest(BaseModel):
         le=10000
     )
     enable_analysis: bool = Field(True, description="是否启用同步分析")
+    auto_create_foreshadow: bool = Field(True, description="分析时是否自动创建伏笔")
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索参考资料）")
     max_retries: int = Field(3, description="每个章节的最大重试次数", ge=0, le=5)
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时指定叙事人称，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    reference_chapter_ids: Optional[List[str]] = Field(None, description="指定作为上下文参考的前置章节ID列表，为空则自动包含所有前置章节")
 
 
 class BatchGenerateResponse(BaseModel):
