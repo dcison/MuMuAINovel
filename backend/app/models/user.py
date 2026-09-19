@@ -45,3 +45,19 @@ class UserPassword(Base):
     has_custom_password = Column(Boolean, default=False, comment="是否为自定义密码")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+
+class RefreshToken(Base):
+    """刷新令牌模型 - 用于「记住我」功能的长期凭证"""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String(36), primary_key=True, index=True, comment="UUID")
+    user_id = Column(String(100), nullable=False, index=True, comment="用户ID")
+    token_hash = Column(String(128), nullable=False, unique=True, index=True, comment="Token SHA-256 哈希")
+    device_info = Column(String(500), nullable=True, comment="设备信息摘要")
+    ip_network = Column(String(45), nullable=True, comment="IP网段")
+    created_at = Column(DateTime(timezone=True), nullable=False, comment="创建时间")
+    expires_at = Column(DateTime(timezone=True), nullable=False, comment="过期时间")
+    last_used_at = Column(DateTime(timezone=True), nullable=True, comment="最后使用时间")
+    is_revoked = Column(Boolean, default=False, comment="是否已吊销")
+    replaced_by = Column(String(36), nullable=True, comment="被哪个token轮换")

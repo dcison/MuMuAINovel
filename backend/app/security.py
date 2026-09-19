@@ -106,3 +106,13 @@ def validate_public_http_url(raw_url: str, *, allowed_schemes: Iterable[str] = (
                 raise HTTPException(status_code=400, detail="URL解析到内网或保留地址")
 
     return raw_url.strip().rstrip("/")
+
+
+def create_refresh_token() -> str:
+    """生成高熵 refresh token（URL-safe，64字节随机）"""
+    return secrets.token_urlsafe(64)
+
+
+def hash_refresh_token(token: str) -> str:
+    """计算 refresh token 的 SHA-256 哈希（用于数据库存储）"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -136,20 +136,31 @@ class SessionManager {
    */
   private async handleSessionExpired() {
     this.stop();
-    
+
     const currentPath = window.location.pathname;
     // 如果已经在登录页或回调页，不显示错误提示
     if (currentPath === '/login' || currentPath === '/auth/callback') {
       return;
     }
-    
-    // 调用登出接口清除服务器端的 Cookie
+
+    // 尝试通过 refresh_token 静默重登
+    try {
+      await authApi.silentLogin();
+      console.log('🔄 [会话] 静默重登成功');
+      this.warningShown = false;
+      this.start();
+      return;
+    } catch {
+      // 静默登录失败，继续走退出流程
+    }
+
+    // 调用登出接口清除服务器端的 Cookie 和吊销 refresh_token
     try {
       await authApi.logout();
     } catch {
       // 即使登出失败也继续跳转
     }
-    
+
     // 直接跳转登录页
     window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
   }

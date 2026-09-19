@@ -163,19 +163,19 @@ export const authApi = {
     email_register_enabled: boolean;
   }>('/auth/config'),
 
-  localLogin: (username: string, password: string) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/login', { username, password }),
+  localLogin: (username: string, password: string, rememberMe = false) =>
+    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/login', { username, password, remember_me: rememberMe }),
 
-  bindAccountLogin: (username: string, password: string) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/bind/login', { username, password }),
+  bindAccountLogin: (username: string, password: string, rememberMe = false) =>
+    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/bind/login', { username, password, remember_me: rememberMe }),
 
-  emailLogin: (payload: import('../types').EmailLoginPayload) =>
+  emailLogin: (payload: import('../types').EmailLoginPayload & { remember_me?: boolean }) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/login', payload),
 
   sendEmailCode: (payload: import('../types').EmailSendCodePayload) =>
     api.post<unknown, { success: boolean; message: string; expire_in_seconds: number; resend_interval_seconds: number }>('/auth/email/send-code', payload),
 
-  emailRegister: (payload: import('../types').EmailRegisterPayload) =>
+  emailRegister: (payload: import('../types').EmailRegisterPayload & { remember_me?: boolean }) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/register', payload),
 
   resetEmailPassword: (payload: import('../types').EmailResetPasswordPayload) =>
@@ -198,9 +198,13 @@ export const authApi = {
   initializePassword: (password: string) =>
     api.post<unknown, { success: boolean; message: string }>('/auth/password/initialize', { password }),
 
-  refreshSession: () => api.post<unknown, { message: string; expire_at: number; remaining_minutes: number }>('/auth/refresh'),
+  refreshSession: () => api.post<unknown, { message: string; expire_at: number; remaining_minutes: number; user: User }>('/auth/refresh'),
+
+  silentLogin: () => api.post<unknown, { message: string; user: User; expire_at: number; remaining_minutes: number }>('/auth/refresh'),
 
   logout: () => api.post('/auth/logout'),
+
+  logoutAll: () => api.post('/auth/logout-all'),
 };
 
 export const userApi = {

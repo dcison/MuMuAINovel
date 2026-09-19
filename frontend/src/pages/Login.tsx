@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Divider,
   Form,
@@ -43,11 +44,13 @@ interface AuthConfig {
 interface LocalLoginValues {
   username: string;
   password: string;
+  rememberMe: boolean;
 }
 
 interface EmailLoginValues {
   email: string;
   code: string;
+  rememberMe: boolean;
 }
 
 interface EmailRegisterValues {
@@ -56,6 +59,7 @@ interface EmailRegisterValues {
   password: string;
   confirmPassword: string;
   display_name?: string;
+  rememberMe: boolean;
 }
 
 interface ResetPasswordValues {
@@ -80,6 +84,8 @@ export default function Login() {
   const [emailLoginForm] = Form.useForm<EmailLoginValues>();
   const [emailRegisterForm] = Form.useForm<EmailRegisterValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
+
+  // 记住我默认勾选
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
@@ -160,7 +166,7 @@ export default function Login() {
   const handleLocalLogin = async (values: LocalLoginValues) => {
     try {
       setLoading(true);
-      const response = await authApi.localLogin(values.username, values.password);
+      const response = await authApi.localLogin(values.username, values.password, values.rememberMe);
       if (response.success) {
         handleLoginSuccess();
       }
@@ -177,6 +183,7 @@ export default function Login() {
       const response = await authApi.emailLogin({
         email: values.email,
         code: values.code,
+        remember_me: values.rememberMe,
       });
       if (response.success) {
         handleLoginSuccess();
@@ -361,7 +368,10 @@ export default function Login() {
             style={{ height: 46, borderRadius: 12 }}
           />
         </Form.Item>
-        <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+        <Form.Item name="rememberMe" valuePropName="checked" initialValue={true} style={{ marginBottom: 12 }}>
+          <Checkbox>记住我，30天内自动登录</Checkbox>
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0, marginTop: 0 }}>
           <Button
             type="primary"
             htmlType="submit"
@@ -531,7 +541,10 @@ export default function Login() {
           </Space.Compact>
         </Form.Item>
 
-        <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+        <Form.Item name="rememberMe" valuePropName="checked" initialValue={true} style={{ marginBottom: 12 }}>
+          <Checkbox>记住我，30天内自动登录</Checkbox>
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0, marginTop: 0 }}>
           <Button
             type="primary"
             htmlType="submit"
@@ -567,6 +580,7 @@ export default function Login() {
       onFinish={handleEmailRegister}
       size="large"
       style={{ marginTop: 16 }}
+      initialValues={{ rememberMe: true }}
     >
       <Form.Item
         name="email"
@@ -665,7 +679,10 @@ export default function Login() {
         />
       </Form.Item>
 
-      <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+      <Form.Item name="rememberMe" valuePropName="checked" initialValue={true} style={{ marginBottom: 12 }}>
+        <Checkbox>记住我，30天内自动登录</Checkbox>
+      </Form.Item>
+      <Form.Item style={{ marginBottom: 0, marginTop: 0 }}>
         <Button
           type="primary"
           htmlType="submit"

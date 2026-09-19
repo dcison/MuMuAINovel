@@ -164,7 +164,7 @@ docker-compose up -d
 
 ```bash
 # 1. 拉取最新镜像（已包含模型文件）
-docker pull mumujie/mumuainovel:latest
+docker pull dcison/mumuainovel:latest
 
 # 2. 创建 docker-compose.yml（点击下方展开查看完整配置）
 ```
@@ -225,7 +225,7 @@ services:
       - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
 
   mumuainovel:
-    image: mumujie/mumuainovel:latest
+    image: dcison/mumuainovel:latest
     container_name: mumuainovel
     depends_on:
       postgres:

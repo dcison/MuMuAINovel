@@ -8,6 +8,7 @@ from typing import Optional
 import hashlib
 import secrets
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -21,7 +22,7 @@ from app.database import get_engine
 from app.models.user import User as UserModel
 from app.models.settings import Settings as SettingsModel
 from app.services.email_service import email_service
-from app.security import create_session_token
+from app.security import create_session_token, create_refresh_token, hash_refresh_token
 
 # 中国时区 UTC+8
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -58,12 +59,14 @@ class LocalLoginRequest(BaseModel):
     """本地登录请求"""
     username: str
     password: str
+    remember_me: bool = False
 
 
 class EmailLoginRequest(BaseModel):
     """邮箱验证码登录请求"""
     email: str
     code: str
+    remember_me: bool = False
 
 
 class EmailSendCodeRequest(BaseModel):
@@ -78,6 +81,7 @@ class EmailRegisterRequest(BaseModel):
     code: str
     password: str
     display_name: Optional[str] = None
+    remember_me: bool = False
 
 
 class EmailResetPasswordRequest(BaseModel):
@@ -252,8 +256,15 @@ def _is_session_cookie_secure() -> bool:
     return not settings.debug
 
 
-def _set_login_cookies(response: Response, user_id: str):
-    """设置登录 Cookie"""
+async def _set_login_cookies(response: Response, user_id: str, remember_me: bool = False, request: Request = None):
+    """设置登录 Cookie
+
+    Args:
+        response: FastAPI Response 对象
+        user_id: 用户 ID
+        remember_me: 是否设置长期 refresh_token（记住我）
+        request: 当前请求（用于提取设备信息）
+    """
     max_age = settings.SESSION_EXPIRE_MINUTES * 60
     session_token = create_session_token(user_id, max_age)
     cookie_secure = _is_session_cookie_secure()
@@ -277,6 +288,72 @@ def _set_login_cookies(response: Response, user_id: str):
         httponly=False,
         samesite="lax",
         secure=cookie_secure,
+    )
+
+    # 记住我：设置长期 refresh_token
+    if remember_me:
+        await _set_refresh_cookie(response, user_id, cookie_secure, request)
+
+
+async def _set_refresh_cookie(response: Response, user_id: str, cookie_secure: bool, request: Request = None):
+    """设置 refresh_token Cookie 并写入数据库"""
+    import ipaddress
+    from app.models.user import RefreshToken as RefreshTokenModel
+
+    raw_token = create_refresh_token()
+    token_hash = hash_refresh_token(raw_token)
+    china_now = get_china_now()
+    expire_days = settings.REFRESH_TOKEN_EXPIRE_DAYS
+
+    # 提取设备信息
+    device_info = None
+    ip_network = None
+    if request:
+        ua = request.headers.get("user-agent", "")
+        device_info = ua[:500] if ua else None
+        client_ip = request.client.host if request.client else None
+        if client_ip:
+            try:
+                addr = ipaddress.ip_address(client_ip)
+                if addr.version == 4:
+                    net = ipaddress.ip_network(f"{client_ip}/24", strict=False)
+                    ip_network = str(net)
+                else:
+                    net = ipaddress.ip_network(f"{client_ip}/64", strict=False)
+                    ip_network = str(net)
+            except Exception:
+                ip_network = client_ip
+
+    # 写入数据库
+    try:
+        db_session = await _get_global_session()
+        async with db_session as session:
+            token_record = RefreshTokenModel(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                token_hash=token_hash,
+                device_info=device_info,
+                ip_network=ip_network,
+                created_at=china_now,
+                expires_at=china_now + timedelta(days=expire_days),
+                is_revoked=False,
+            )
+            session.add(token_record)
+            await session.commit()
+            logger.info(f"✅ [Refresh Token] 为用户 {user_id} 创建记住我凭证")
+    except Exception as e:
+        logger.error(f"❌ [Refresh Token] 存储失败: {e}")
+
+    # 设置 Cookie
+    max_age_seconds = expire_days * 24 * 3600
+    response.set_cookie(
+        key=settings.REFRESH_TOKEN_COOKIE_NAME,
+        value=raw_token,
+        max_age=max_age_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_secure,
+        path="/",
     )
 
 
@@ -345,7 +422,7 @@ async def get_auth_config():
 
 
 @router.post("/local/login", response_model=LocalLoginResponse)
-async def local_login(request: LocalLoginRequest, response: Response):
+async def local_login(request: LocalLoginRequest, response: Response, req: Request = None):
     """本地账户登录（支持.env配置的管理员账号和Linux DO授权后绑定的账号）"""
     if not settings.LOCAL_AUTH_ENABLED:
         raise HTTPException(status_code=403, detail="本地账户登录未启用")
@@ -402,8 +479,8 @@ async def local_login(request: LocalLoginRequest, response: Response):
 
             logger.info(f"[本地登录] 管理员用户 {user.user_id} 登录成功")
 
-    _set_login_cookies(response, user.user_id)
-    logger.info(f"✅ [登录] 用户 {user.user_id} 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟")
+    await _set_login_cookies(response, user.user_id, remember_me=request.remember_me, request=req)
+    logger.info(f"✅ [登录] 用户 {user.user_id} 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟，记住我={request.remember_me}")
 
     return LocalLoginResponse(
         success=True,
@@ -482,7 +559,7 @@ async def send_email_verification_code(request: EmailSendCodeRequest):
 
 
 @router.post("/email/register", response_model=LocalLoginResponse)
-async def email_register(request: EmailRegisterRequest, response: Response):
+async def email_register(request: EmailRegisterRequest, response: Response, req: Request = None):
     """邮箱验证码注册并自动登录"""
     runtime = await _get_auth_runtime_settings()
     if not runtime["email_auth_enabled"]:
@@ -522,8 +599,8 @@ async def email_register(request: EmailRegisterRequest, response: Response):
     await password_manager.set_password(user.user_id, email, request.password)
     _email_verification_storage.pop(_get_verification_storage_key("register", email), None)
 
-    _set_login_cookies(response, user.user_id)
-    logger.info(f"✅ [邮箱注册] 用户 {user.user_id} 注册并登录成功")
+    await _set_login_cookies(response, user.user_id, remember_me=request.remember_me, request=req)
+    logger.info(f"✅ [邮箱注册] 用户 {user.user_id} 注册并登录成功，记住我={request.remember_me}")
 
     return LocalLoginResponse(
         success=True,
@@ -533,7 +610,7 @@ async def email_register(request: EmailRegisterRequest, response: Response):
 
 
 @router.post("/email/login", response_model=LocalLoginResponse)
-async def email_login(request: EmailLoginRequest, response: Response):
+async def email_login(request: EmailLoginRequest, response: Response, req: Request = None):
     """邮箱验证码登录"""
     runtime = await _get_auth_runtime_settings()
     if not runtime["email_auth_enabled"]:
@@ -571,8 +648,8 @@ async def email_login(request: EmailLoginRequest, response: Response):
     if latest_user:
         user = latest_user
 
-    _set_login_cookies(response, user.user_id)
-    logger.info(f"✅ [邮箱登录] 用户 {user.user_id} 登录成功")
+    await _set_login_cookies(response, user.user_id, remember_me=request.remember_me, request=req)
+    logger.info(f"✅ [邮箱登录] 用户 {user.user_id} 登录成功，记住我={request.remember_me}")
 
     return LocalLoginResponse(
         success=True,
@@ -692,8 +769,8 @@ async def _handle_callback(
     logger.info(f"OAuth回调成功，重定向到前端: {redirect_url}")
     redirect_response = RedirectResponse(url=redirect_url)
 
-    _set_login_cookies(redirect_response, user.user_id)
-    logger.info(f"✅ [OAuth登录] 用户 {user.user_id} 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟")
+    await _set_login_cookies(redirect_response, user.user_id, remember_me=True, request=None)
+    logger.info(f"✅ [OAuth登录] 用户 {user.user_id} 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟，记住我=True")
 
     if is_first_login:
         redirect_response.set_cookie(
@@ -733,60 +810,201 @@ async def callback_alias(
 
 @router.post("/refresh")
 async def refresh_session(request: Request, response: Response):
-    """刷新会话 - 延长登录状态"""
-    if not hasattr(request.state, "user") or not request.state.user:
+    """刷新会话 - 基于 refresh_token 的自动重登（记住我）
+    
+    两种模式：
+    1. 有有效 session → 在阈值内续期（向后兼容）
+    2. 无有效 session 但有 refresh_token → 自动重登
+    """
+    from app.models.user import RefreshToken as RefreshTokenModel
+    from sqlalchemy import select, update
+
+    # 模式1：session 仍然有效，走原有续期逻辑
+    if hasattr(request.state, "user") and request.state.user:
+        user = request.state.user
+        session_expire_at = request.cookies.get("session_expire_at")
+        if session_expire_at:
+            try:
+                expire_timestamp = int(session_expire_at)
+                current_timestamp = int(get_china_now().timestamp())
+                remaining_minutes = (expire_timestamp - current_timestamp) / 60
+
+                if remaining_minutes > settings.SESSION_REFRESH_THRESHOLD_MINUTES:
+                    logger.info(f"⏱️ [刷新会话] 用户 {user.user_id} 会话仍有效，剩余 {int(remaining_minutes)} 分钟")
+                    return {
+                        "message": "会话仍然有效，无需刷新",
+                        "remaining_minutes": int(remaining_minutes),
+                        "expire_at": expire_timestamp,
+                        "user": user.dict()
+                    }
+            except (ValueError, TypeError):
+                pass
+
+        await _set_login_cookies(response, user.user_id, remember_me=False, request=request)
+
+        china_now = get_china_now()
+        expire_time = china_now + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
+        expire_at = int(expire_time.timestamp())
+
+        logger.info(f"[刷新会话] 用户 {user.user_id} 会话续期成功")
+        return {
+            "message": "会话刷新成功",
+            "expire_at": expire_at,
+            "remaining_minutes": settings.SESSION_EXPIRE_MINUTES,
+            "user": user.dict()
+        }
+
+    # 模式2：session 过期，尝试用 refresh_token 自动重登
+    raw_refresh = request.cookies.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+    if not raw_refresh:
         raise HTTPException(status_code=401, detail="未登录，无法刷新会话")
 
-    user = request.state.user
-
-    session_expire_at = request.cookies.get("session_expire_at")
-    if session_expire_at:
-        try:
-            expire_timestamp = int(session_expire_at)
-            current_timestamp = int(get_china_now().timestamp())
-            remaining_minutes = (expire_timestamp - current_timestamp) / 60
-
-            if remaining_minutes > settings.SESSION_REFRESH_THRESHOLD_MINUTES:
-                logger.info(f"⏱️ [刷新会话] 用户 {user.user_id} 会话仍有效，剩余 {int(remaining_minutes)} 分钟")
-                return {
-                    "message": "会话仍然有效，无需刷新",
-                    "remaining_minutes": int(remaining_minutes),
-                    "expire_at": expire_timestamp
-                }
-        except (ValueError, TypeError):
-            pass
-
-    _set_login_cookies(response, user.user_id)
-
+    token_hash = hash_refresh_token(raw_refresh)
     china_now = get_china_now()
+
+    db_session = await _get_global_session()
+    async with db_session as session:
+        # 查找有效的 refresh token
+        result = await session.execute(
+            select(RefreshTokenModel).where(
+                RefreshTokenModel.token_hash == token_hash,
+                RefreshTokenModel.is_revoked == False,
+                RefreshTokenModel.expires_at > china_now,
+            )
+        )
+        token_record = result.scalar_one_or_none()
+
+        if not token_record:
+            # 清除无效 cookie
+            response.delete_cookie(settings.REFRESH_TOKEN_COOKIE_NAME, path="/")
+            raise HTTPException(status_code=401, detail="登录凭证已过期，请重新登录")
+
+        # Token rotation：吊销旧 token，生成新 token
+        new_raw_token = create_refresh_token()
+        new_token_hash = hash_refresh_token(new_raw_token)
+        new_expires_at = china_now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+        new_record = RefreshTokenModel(
+            id=str(uuid.uuid4()),
+            user_id=token_record.user_id,
+            token_hash=new_token_hash,
+            device_info=token_record.device_info,
+            ip_network=token_record.ip_network,
+            created_at=china_now,
+            expires_at=new_expires_at,
+            is_revoked=False,
+            replaced_by=None,
+        )
+        session.add(new_record)
+        await session.flush()
+
+        # 吊销旧 token，记录被哪个新 token 替换
+        token_record.is_revoked = True
+        token_record.replaced_by = new_record.id
+        token_record.last_used_at = china_now
+        await session.commit()
+
+        # 获取用户信息
+        user = await user_manager.get_user(token_record.user_id)
+        if not user or user.trust_level == -1:
+            raise HTTPException(status_code=401, detail="用户不存在或已被禁用")
+
+    # 签发新 session 和新 refresh_token cookie
+    cookie_secure = _is_session_cookie_secure()
+    await _set_login_cookies(response, user.user_id, remember_me=False, request=request)
+
+    # 设置新 refresh_token cookie
+    max_age_seconds = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600
+    response.set_cookie(
+        key=settings.REFRESH_TOKEN_COOKIE_NAME,
+        value=new_raw_token,
+        max_age=max_age_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=cookie_secure,
+        path="/",
+    )
+
     expire_time = china_now + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
     expire_at = int(expire_time.timestamp())
 
-    logger.info(f"[刷新会话] 用户: {user.user_id}")
-    logger.info(f"[刷新会话] 中国当前时间: {china_now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
-    logger.info(f"[刷新会话] 中国过期时间: {expire_time.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
-    logger.info(f"[刷新会话] 过期时间戳 (秒): {expire_at}")
-    logger.info(f"[刷新会话] Cookie max_age (秒): {settings.SESSION_EXPIRE_MINUTES * 60}")
-
-    logger.info(f"用户 {user.user_id} 刷新会话成功")
+    logger.info(f"🔄 [自动重登] 用户 {user.user_id} 通过 refresh_token 自动登录成功（token 已轮换）")
     return {
-        "message": "会话刷新成功",
+        "message": "自动登录成功",
         "expire_at": expire_at,
-        "remaining_minutes": settings.SESSION_EXPIRE_MINUTES
+        "remaining_minutes": settings.SESSION_EXPIRE_MINUTES,
+        "user": user.dict()
     }
 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):
-    """退出登录"""
+    """退出登录 - 同时吊销当前设备的 refresh_token"""
+    from app.models.user import RefreshToken as RefreshTokenModel
+    from sqlalchemy import update
+
     user_id = getattr(request.state, 'user_id', None)
     if user_id:
         logger.info(f"🚪 [退出] 用户 {user_id} 退出登录")
 
-    response.delete_cookie("user_id")
-    response.delete_cookie("session_token")
-    response.delete_cookie("session_expire_at")
+    # 吊销当前设备的 refresh_token
+    raw_refresh = request.cookies.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+    if raw_refresh and user_id:
+        token_hash = hash_refresh_token(raw_refresh)
+        try:
+            db_session = await _get_global_session()
+            async with db_session as session:
+                await session.execute(
+                    update(RefreshTokenModel)
+                    .where(
+                        RefreshTokenModel.token_hash == token_hash,
+                        RefreshTokenModel.user_id == user_id,
+                        RefreshTokenModel.is_revoked == False,
+                    )
+                    .values(is_revoked=True)
+                )
+                await session.commit()
+                logger.info(f"🚪 [退出] 已吊销用户 {user_id} 当前设备的 refresh_token")
+        except Exception as e:
+            logger.error(f"❌ [退出] 吊销 refresh_token 失败: {e}")
+
+    response.delete_cookie("user_id", path="/")
+    response.delete_cookie("session_token", path="/")
+    response.delete_cookie("session_expire_at", path="/")
+    response.delete_cookie(settings.REFRESH_TOKEN_COOKIE_NAME, path="/")
     return {"message": "退出登录成功"}
+
+
+@router.post("/logout-all")
+async def logout_all(request: Request, response: Response):
+    """登出所有设备 - 吊销该用户所有 refresh_token"""
+    from app.models.user import RefreshToken as RefreshTokenModel
+    from sqlalchemy import update
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    db_session = await _get_global_session()
+    async with db_session as session:
+        result = await session.execute(
+            update(RefreshTokenModel)
+            .where(
+                RefreshTokenModel.user_id == user_id,
+                RefreshTokenModel.is_revoked == False,
+            )
+            .values(is_revoked=True)
+        )
+        revoked_count = result.rowcount
+        await session.commit()
+
+    logger.info(f"🚪 [全设备退出] 用户 {user_id} 吊销了 {revoked_count} 个设备的 refresh_token")
+
+    response.delete_cookie("user_id", path="/")
+    response.delete_cookie("session_token", path="/")
+    response.delete_cookie("session_expire_at", path="/")
+    response.delete_cookie(settings.REFRESH_TOKEN_COOKIE_NAME, path="/")
+    return {"message": f"已登出所有设备（{revoked_count} 个）"}
 
 
 @router.get("/user")
@@ -864,7 +1082,7 @@ async def initialize_user_password(request: Request, password_req: SetPasswordRe
 
 
 @router.post("/bind/login", response_model=LocalLoginResponse)
-async def bind_account_login(request: LocalLoginRequest, response: Response):
+async def bind_account_login(request: LocalLoginRequest, response: Response, req: Request = None):
     """使用绑定的账号密码登录（LinuxDO授权后绑定的账号）"""
     all_users = await user_manager.get_all_users()
     target_user = None
@@ -896,8 +1114,8 @@ async def bind_account_login(request: LocalLoginRequest, response: Response):
     if not is_valid:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-    _set_login_cookies(response, target_user.user_id)
-    logger.info(f"✅ [绑定账号登录] 用户 {target_user.user_id} ({request.username}) 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟")
+    await _set_login_cookies(response, target_user.user_id, remember_me=request.remember_me, request=req)
+    logger.info(f"✅ [绑定账号登录] 用户 {target_user.user_id} ({request.username}) 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟，记住我={request.remember_me}")
 
     return LocalLoginResponse(
         success=True,

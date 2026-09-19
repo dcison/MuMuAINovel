@@ -94,28 +94,13 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
                 }}
                 title={hasUpdate ? `发现新版本 v${latestVersion}，点击查看` : '当前版本'}
               >
-                <strong style={{ color: token.colorText }}>{VERSION_INFO.projectName}</strong>
+                <strong style={{ color: token.colorText }}>
+                  原版：{VERSION_INFO.projectName}
+                </strong>
                 <span>{getVersionString()}</span>
               </Text>
             </Badge>
             <Divider type="vertical" style={{ margin: '0 4px', borderColor: token.colorBorder }} />
-            <Button
-              type="text"
-              size="small"
-              icon={<GiftOutlined />}
-              onClick={() => window.open('https://mumuverse.space:1588/', '_blank')}
-              style={{
-                color: token.colorTextSecondary,
-                fontSize: 11,
-                height: 24,
-                padding: '0 4px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-              }}
-            >
-              赞助
-            </Button>
             <Divider type="vertical" style={{ margin: '0 4px', borderColor: token.colorBorder }} />
             <Link
               href={VERSION_INFO.githubUrl}
@@ -179,7 +164,9 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
                 }}
                 title={hasUpdate ? `发现新版本 v${latestVersion}，点击查看` : '当前版本'}
               >
-                <strong style={{ color: token.colorText }}>{VERSION_INFO.projectName}</strong>
+                <strong style={{ color: token.colorText }}>
+                  原版 {VERSION_INFO.projectName}
+                </strong>
                 <span>{getVersionString()}</span>
               </Text>
             </Badge>
@@ -257,7 +244,7 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
                 textShadow: `0 1px 3px ${alphaColor(token.colorText, 0.08)}`,
               }}
             >
-              <span>Made with</span>
+              <span>原作者 Made with</span>
               <HeartFilled style={{ color: token.colorError, fontSize: 11 }} />
               <span>by {VERSION_INFO.author}</span>
             </Text>
