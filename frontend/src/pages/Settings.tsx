@@ -343,30 +343,20 @@ export default function SettingsPage() {
 
   const handleCoverProviderChange = (value: string) => {
     const provider = coverApiProviders.find(p => p.value === value);
+
     if (!provider) {
       setCoverTestResult(null);
       return;
     }
 
-    const nextValues: Record<string, string> = {};
-    if (provider.defaultUrl) {
-      nextValues.cover_api_base_url = provider.defaultUrl;
-    }
-    if (provider.value === 'mumu') {
-      nextValues.cover_api_key = '';
-      nextValues.cover_image_model = provider.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel;
-    }
-
-    form.setFieldsValue(nextValues);
-    setCoverTestResult(null);
-  };
-
-  const handleMumuCoverBaseUrlChange = (value: string) => {
-    const option = mumuCoverBaseUrlOptions.find(item => item.value === value);
     form.setFieldsValue({
-      cover_api_base_url: value,
-      cover_image_model: option?.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel,
+      cover_api_base_url: provider.defaultUrl,
+      cover_image_model:
+        provider.value === 'grok'
+          ? 'grok-2-image'
+          : 'gemini-2.0-flash-exp-image-generation',
     });
+
     setCoverTestResult(null);
   };
 

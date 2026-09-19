@@ -932,80 +932,6 @@ export default function Chapters() {
     return '已埋入';
   };
 
-  const handleGenerate = async () => {
-    if (!editingId) return;
-
-    try {
-      setIsContinuing(true);
-      setIsGenerating(true);
-      setSingleChapterProgress(0);
-      setSingleChapterProgressMessage('准备开始生成...');
-
-      // 计算参考章节/伏笔参数（全选时不传）
-      const previousCount = generateDialogChapter
-        ? chapters.filter((c) => c.chapter_number < generateDialogChapter.chapter_number).length
-        : 0;
-      const referenceChapterIds = toReferenceIds(dialogChapterIds, previousCount);
-      const referenceForeshadowIds = toReferenceIds(dialogForeshadowIds, foreshadowItems.length);
-
-      const result = await generateChapterContentStream(
-        editingId,
-        (content) => {
-          editorForm.setFieldsValue({ content });
-
-          if (contentTextAreaRef.current) {
-            const textArea = contentTextAreaRef.current.resizableTextArea?.textArea;
-            if (textArea) {
-              textArea.scrollTop = textArea.scrollHeight;
-            }
-          }
-        },
-        selectedStyleId,
-        targetWordCount,
-        (progressMsg, progressValue) => {
-          // 进度回调
-          setSingleChapterProgress(progressValue);
-          setSingleChapterProgressMessage(progressMsg);
-        },
-        selectedModel,  // 传递选中的模型
-        temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey,  // 传递选中的Skill
-        referenceChapterIds,
-        referenceForeshadowIds,
-        singleAutoAnalysis,  // 传递是否自动分析
-        singleAutoCreateForeshadow  // 传递是否自动创建伏笔
-      );
-
-      message.success('AI创作成功，正在分析章节内容...');
-
-      // 如果返回了分析任务ID，启动轮询
-      if (result?.analysis_task_id) {
-        const taskId = result.analysis_task_id;
-        setAnalysisTasksMap(prev => ({
-          ...prev,
-          [editingId]: {
-            has_task: true,
-            task_id: taskId,
-            chapter_id: editingId,
-            status: 'pending',
-            progress: 0
-          }
-        }));
-
-        // 启动轮询
-        startPollingTask(editingId);
-      }
-    } catch (error) {
-      const apiError = error as ApiError;
-      message.error('AI创作失败：' + (apiError.response?.data?.detail || apiError.message || '未知错误'));
-    } finally {
-      setIsContinuing(false);
-      setIsGenerating(false);
-      setSingleChapterProgress(0);
-      setSingleChapterProgressMessage('');
-    }
-  };
-
   // 单章生成对话框状态
   const [singleAutoAnalysis, setSingleAutoAnalysis] = useState(true);
   const [singleAutoCreateForeshadow, setSingleAutoCreateForeshadow] = useState(true);
@@ -1296,6 +1222,7 @@ export default function Chapters() {
     startChapterNumber: number;
     count: number;
     enableAnalysis: boolean;
+    autoCreateForeshadow?: boolean;
     styleId?: number;
     targetWordCount?: number;
     model?: string;
