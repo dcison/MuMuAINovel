@@ -15,6 +15,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   useEffect(() => {
     const checkAuth = async () => {
+      // 先尝试通过 session_token 获取用户
       try {
         await authApi.getCurrentUser();
         setIsAuthenticated(true);
@@ -22,14 +23,29 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           message.warning({ content: msg, duration: 10 });
         });
         sessionManager.start();
+        return;
       } catch {
+        // session_token 过期或不存在，尝试静默登录（refresh_token）
+      }
+
+      // 尝试通过 refresh_token 自动重登
+      try {
+        await authApi.silentLogin();
+        setIsAuthenticated(true);
+        sessionManager.setWarningCallback((msg) => {
+          message.warning({ content: msg, duration: 10 });
+        });
+        sessionManager.start();
+      } catch {
+        // 静默登录失败，需要用户手动登录
         setIsAuthenticated(false);
         sessionManager.stop();
       }
     };
     checkAuth();
-    
+
     return () => {
+      sessionManager.stop();
     };
   }, []);
 
