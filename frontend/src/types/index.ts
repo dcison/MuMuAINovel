@@ -240,6 +240,8 @@ export interface ProjectWizardRequest {
     location: string;
     atmosphere: string;
     rules: string;
+    climate?: string;
+    clothing?: string;
   };
 }
 
@@ -249,6 +251,8 @@ export interface WorldBuildingResponse {
   location: string;
   atmosphere: string;
   rules: string;
+  climate?: string;
+  clothing?: string;
 }
 
 // 大纲类型定义

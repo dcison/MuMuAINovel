@@ -43,6 +43,8 @@ interface WorldBuildingResult {
   location: string;
   atmosphere: string;
   rules: string;
+  climate?: string;
+  clothing?: string;
 }
 
 export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
@@ -302,6 +304,8 @@ export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
           location: worldResult.location || '',
           atmosphere: worldResult.atmosphere || '',
           rules: worldResult.rules || '',
+          climate: worldResult.climate || '',
+          clothing: worldResult.clothing || '',
         },
         theme: data.theme,
         genre: genreString,

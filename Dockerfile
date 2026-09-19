@@ -2,29 +2,27 @@
 # 支持多架构构建: linux/amd64, linux/arm64
 
 # 构建参数
-ARG USE_CN_MIRROR=false
+ARG IS_DEV=false
 ARG EMBEDDING_MODEL_REVISION=60750e200f336606cdd1ecbda9bb33fbf4d5b2a1
 
 # 阶段1: 构建前端
 FROM node:22-alpine AS frontend-builder
 
-ARG USE_CN_MIRROR
+ARG IS_DEV
 
 WORKDIR /frontend
 
 # 复制前端依赖文件
 COPY frontend/package*.json ./
 
-# 根据参数决定是否使用国内npm镜像
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        npm config set registry https://registry.npmmirror.com; \
+# IS_DEV=true: 使用国内镜像源 + npm install（本地开发）
+# IS_DEV=false: 使用默认源 + npm ci（CI/CD 构建，严格按 lock 文件）
+RUN if [ "$IS_DEV" = "true" ]; then \
+        npm config set registry https://registry.npmmirror.com && \
+        npm install; \
+    else \
+        npm ci; \
     fi
-
-# 删除 package-lock.json 以避免因镜像源不一致导致的 404 错误
-RUN rm -f package-lock.json
-
-# 安装依赖
-RUN npm install
 
 # 复制前端源代码
 COPY frontend/ ./
@@ -38,7 +36,7 @@ RUN npm run build
 # 阶段2: 构建最终镜像
 FROM python:3.12-slim
 
-ARG USE_CN_MIRROR
+ARG IS_DEV
 ARG TARGETPLATFORM
 ARG TARGETARCH
 ARG EMBEDDING_MODEL_REVISION
@@ -47,7 +45,7 @@ ARG EMBEDDING_MODEL_REVISION
 WORKDIR /app
 
 # 根据参数决定是否使用国内镜像源
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+RUN if [ "$IS_DEV" = "true" ]; then \
         sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
         sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources; \
     fi
@@ -60,17 +58,8 @@ RUN apt-get update && apt-get install -y \
     netcat-traditional \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制后端依赖文件
-COPY backend/requirements.txt ./
-
-# 安装不包含 PyTorch/Transformers 的 ONNX 运行时依赖
-RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
-        pip install --no-cache-dir -r requirements.txt -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
-    else \
-        pip install --no-cache-dir -r requirements.txt; \
-    fi
-
 # 直接从 ModelScope 下载已转换的 ONNX 部署文件，并校验发布清单。
+# 放在 COPY 之前，避免后端代码或依赖变动触发重新下载
 ENV ONNX_EMBEDDING_MODEL_DIR=/app/embedding/onnx/paraphrase-multilingual-MiniLM-L12-v2
 RUN set -eu; \
     model_url="https://modelscope.cn/models/mumujie/paraphrase-multilingual-MiniLM-L12-v2-ONNX/resolve/${EMBEDDING_MODEL_REVISION}"; \
@@ -81,6 +70,16 @@ RUN set -eu; \
     echo "e7515ed8b2f63e84f99dfed652b572e61a9a799f694a1c9399a7f3845b69cda5  $ONNX_EMBEDDING_MODEL_DIR/model.onnx" | sha256sum -c -; \
     echo "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8  $ONNX_EMBEDDING_MODEL_DIR/tokenizer.json" | sha256sum -c -; \
     echo "d9cfbb22ea59e66294db9bd5b35b452326658a2fe1580e409f0c806be01973c2  $ONNX_EMBEDDING_MODEL_DIR/embedding_config.json" | sha256sum -c -
+
+# 复制后端依赖文件
+COPY backend/requirements.txt ./
+
+# 安装不包含 PyTorch/Transformers 的 ONNX 运行时依赖
+RUN if [ "$IS_DEV" = "true" ]; then \
+        pip install --no-cache-dir -r requirements.txt -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 # 复制后端代码（不包含embedding，因为已经下载了）
 COPY backend/ ./

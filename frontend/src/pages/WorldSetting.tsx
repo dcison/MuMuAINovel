@@ -743,7 +743,7 @@ export default function WorldSetting() {
               </Paragraph>
             </div>
 
-            <div style={{ marginBottom: 0 }}>
+            <div style={{ marginBottom: 24 }}>
               <Title level={5} style={{ color: token.colorError, marginBottom: 12 }}>
                 规则设定
               </Title>
@@ -758,6 +758,42 @@ export default function WorldSetting() {
                 {newWorldData.rules}
               </Paragraph>
             </div>
+
+            {newWorldData.climate && (
+              <div style={{ marginBottom: 24 }}>
+                <Title level={5} style={{ color: '#722ed1', marginBottom: 12 }}>
+                  气候设定
+                </Title>
+                <Paragraph style={{
+                  fontSize: 15,
+                  lineHeight: 1.8,
+                  padding: 16,
+                  background: token.colorBgLayout,
+                  borderRadius: 8,
+                  borderLeft: '4px solid #722ed1'
+                }}>
+                  {newWorldData.climate}
+                </Paragraph>
+              </div>
+            )}
+
+            {newWorldData.clothing && (
+              <div style={{ marginBottom: 0 }}>
+                <Title level={5} style={{ color: '#eb2f96', marginBottom: 12 }}>
+                  服装设定
+                </Title>
+                <Paragraph style={{
+                  fontSize: 15,
+                  lineHeight: 1.8,
+                  padding: 16,
+                  background: token.colorBgLayout,
+                  borderRadius: 8,
+                  borderLeft: '4px solid #eb2f96'
+                }}>
+                  {newWorldData.clothing}
+                </Paragraph>
+              </div>
+            )}
           </div>
         )}
       </Modal>

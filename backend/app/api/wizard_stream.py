@@ -153,7 +153,9 @@ async def world_building_generator(
                             "time_period": "AI多次返回为空，请稍后重试",
                             "location": "AI多次返回为空，请稍后重试",
                             "atmosphere": "AI多次返回为空，请稍后重试",
-                            "rules": "AI多次返回为空，请稍后重试"
+                            "rules": "AI多次返回为空，请稍后重试",
+                            "climate": "AI多次返回为空，请稍后重试",
+                            "clothing": "AI多次返回为空，请稍后重试"
                         }
                         world_generation_success = True  # 标记为成功以继续流程
                         break
@@ -188,10 +190,12 @@ async def world_building_generator(
                             "time_period": "AI返回格式错误，请重试",
                             "location": "AI返回格式错误，请重试",
                             "atmosphere": "AI返回格式错误，请重试",
-                            "rules": "AI返回格式错误，请重试"
+                            "rules": "AI返回格式错误，请重试",
+                            "climate": "AI返回格式错误，请重试",
+                            "clothing": "AI返回格式错误，请重试"
                         }
                         world_generation_success = True  # 标记为成功以继续流程
-                        
+
             except Exception as e:
                 logger.error(f"❌ 世界构建生成异常（尝试{world_retry_count+1}/{MAX_WORLD_RETRIES}）: {type(e).__name__}: {e}")
                 world_retry_count += 1
@@ -221,6 +225,8 @@ async def world_building_generator(
             world_location=world_data.get("location"),
             world_atmosphere=world_data.get("atmosphere"),
             world_rules=world_data.get("rules"),
+            world_climate=world_data.get("climate"),
+            world_clothing=world_data.get("clothing"),
             narrative_perspective=narrative_perspective,
             target_words=target_words,
             chapter_count=chapter_count,
@@ -273,7 +279,9 @@ async def world_building_generator(
             "time_period": world_data.get("time_period"),
             "location": world_data.get("location"),
             "atmosphere": world_data.get("atmosphere"),
-            "rules": world_data.get("rules")
+            "rules": world_data.get("rules"),
+            "climate": world_data.get("climate"),
+            "clothing": world_data.get("clothing")
         })
         
         # 发送世界观完成信号
@@ -620,7 +628,9 @@ async def characters_generator(
             "time_period": project.world_time_period or "未设定",
             "location": project.world_location or "未设定",
             "atmosphere": project.world_atmosphere or "未设定",
-            "rules": project.world_rules or "未设定"
+            "rules": project.world_rules or "未设定",
+            "climate": project.world_climate or "未设定",
+            "clothing": project.world_clothing or "未设定"
         }
         
         # 设置用户信息以启用MCP
@@ -730,6 +740,8 @@ async def characters_generator(
                         location=world_context.get("location", ""),
                         atmosphere=world_context.get("atmosphere", ""),
                         rules=world_context.get("rules", ""),
+                        climate=world_context.get("climate", ""),
+                        clothing=world_context.get("clothing", ""),
                         theme=theme or project.theme or "",
                         genre=genre or project.genre or "",
                         requirements=batch_requirements + careers_context  # 添加职业上下文
@@ -1656,7 +1668,9 @@ async def world_building_regenerate_generator(
                             "time_period": "AI多次返回为空，请稍后重试",
                             "location": "AI多次返回为空，请稍后重试",
                             "atmosphere": "AI多次返回为空，请稍后重试",
-                            "rules": "AI多次返回为空，请稍后重试"
+                            "rules": "AI多次返回为空，请稍后重试",
+                            "climate": "AI多次返回为空，请稍后重试",
+                            "clothing": "AI多次返回为空，请稍后重试"
                         }
                         world_generation_success = True
                         break
@@ -1687,10 +1701,12 @@ async def world_building_regenerate_generator(
                             "time_period": "AI返回格式错误，请重试",
                             "location": "AI返回格式错误，请重试",
                             "atmosphere": "AI返回格式错误，请重试",
-                            "rules": "AI返回格式错误，请重试"
+                            "rules": "AI返回格式错误，请重试",
+                            "climate": "AI返回格式错误，请重试",
+                            "clothing": "AI返回格式错误，请重试"
                         }
                         world_generation_success = True
-                        
+
             except Exception as e:
                 logger.error(f"❌ 世界观重新生成异常（尝试{world_retry_count+1}/{MAX_WORLD_RETRIES}）: {type(e).__name__}: {e}")
                 world_retry_count += 1
@@ -1712,7 +1728,9 @@ async def world_building_regenerate_generator(
             "time_period": world_data.get("time_period"),
             "location": world_data.get("location"),
             "atmosphere": world_data.get("atmosphere"),
-            "rules": world_data.get("rules")
+            "rules": world_data.get("rules"),
+            "climate": world_data.get("climate"),
+            "clothing": world_data.get("clothing")
         })
         
         yield await tracker.done()
