@@ -242,6 +242,39 @@ export async function generateOutlineBackground(
   };
 }
 
+
+/**
+ * 请求后台AI重新生成单卷大纲并轮询进度
+ * 基于当前字段值和全局信息重新生成卷纲
+ */
+export async function regenerateOutlineBackground(
+  outlineId: string,
+  data: Record<string, unknown>,
+  onProgress: TaskProgressCallback,
+  onComplete: TaskCompleteCallback,
+  onError: TaskErrorCallback
+): Promise<() => void> {
+  const response = await fetch(`/api/outlines/${outlineId}/regenerate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: response.statusText }));
+    onError(err.detail || '创建重新生成任务失败', {} as TaskStatus);
+    return () => {};
+  }
+
+  const { task_id } = await response.json();
+  const cancelPolling = pollTaskUntilComplete(task_id, onProgress, onComplete, onError);
+
+  return () => {
+    cancelPolling();
+    cancelTask(task_id).catch(() => {});
+  };
+}
+
 /**
  * 请求后台生成章节内容并轮询进度
  * 关闭浏览器不影响生成，生成完成后内容自动保存到数据库

@@ -404,6 +404,16 @@ class AutoCharacterService:
                         else:
                             continue
                         
+                        # 容错处理：如果名称包含冒号（如 "角色名：描述"），提取冒号前的部分
+                        if '：' in name:
+                            name = name.split('：')[0].strip()
+                        elif ':' in name:
+                            name = name.split(':')[0].strip()
+                        
+                        # 限制名称长度，避免数据库字段溢出
+                        if len(name) > 100:
+                            name = name[:100]
+                        
                         all_character_names.add(name)
                         # 收集角色出现的上下文
                         if name not in character_context:

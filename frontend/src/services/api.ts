@@ -757,6 +757,19 @@ export const chapterApi = {
       }>;
     }>(`/chapters/${chapterId}/regeneration/tasks`, { params: { limit } }),
 
+  regenerateFromPosition: (chapterId: string, data: {
+    target_chapter_count: number;
+    expansion_strategy: 'balanced' | 'climax' | 'detail';
+    provider?: string;
+    model?: string;
+  }) =>
+    api.post<unknown, {
+      task_id: string;
+      task_type: string;
+      status: string;
+      message: string;
+    }>(`/chapters/${chapterId}/regenerate-from-position`, data),
+
   // 局部重写相关
   partialRegenerateStream: (
     chapterId: string,

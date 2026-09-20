@@ -375,10 +375,9 @@ def clean_json_response(text: str) -> str:
         # （区分字符串内外：结构位置替换为ASCII，字符串内保留或转义）
         text = _fix_json_string_values(text)
         
-        # 去除 markdown 代码块
-        text = re.sub(r'^```json\s*\n?', '', text, flags=re.MULTILINE | re.IGNORECASE)
-        text = re.sub(r'^```\s*\n?', '', text, flags=re.MULTILINE)
-        text = re.sub(r'\n?```\s*$', '', text, flags=re.MULTILINE)
+        # 去除 markdown 代码块（支持 3+ 个反引号及 json 标记）
+        text = re.sub(r'^\s*```+\s*(?:json)?\s*\n?', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        text = re.sub(r'\n?\s*```+\s*$', '', text, flags=re.MULTILINE)
         text = text.strip()
         
         if len(text) != original_length:

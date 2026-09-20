@@ -33,6 +33,7 @@ export default function ExpansionPlanEditor({
   // 角色列表和选择
   const [availableCharacters, setAvailableCharacters] = useState<Character[]>([]);
   const [characters, setCharacters] = useState<string[]>([]);
+  const [organizations, setOrganizations] = useState<string[]>([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
 
   // 加载项目角色列表
@@ -81,6 +82,7 @@ export default function ExpansionPlanEditor({
       if (planData) {
         setKeyEvents(planData.key_events || []);
         setCharacters(planData.character_focus || []);
+        setOrganizations(planData.organization_focus || []);
         form.setFieldsValue({
           summary: chapterSummary || '',
           emotional_tone: planData.emotional_tone,
@@ -92,6 +94,7 @@ export default function ExpansionPlanEditor({
         // 重置状态
         setKeyEvents([]);
         setCharacters([]);
+        setOrganizations([]);
         form.setFieldsValue({
           summary: chapterSummary || ''
         });
@@ -112,6 +115,12 @@ export default function ExpansionPlanEditor({
     }
   };
 
+  const handleAddOrganization = (organizationName: string) => {
+    if (organizationName && !organizations.includes(organizationName)) {
+      setOrganizations([...organizations, organizationName]);
+    }
+  };
+
   const handleSubmit = async () => {
     try {
       setLoading(true);
@@ -124,9 +133,9 @@ export default function ExpansionPlanEditor({
         return;
       }
       
-      // 验证至少有一个角色
-      if (characters.length === 0) {
-        message.warning('请至少添加一个涉及角色');
+      // 验证至少有一个角色或组织
+      if (characters.length === 0 && organizations.length === 0) {
+        message.warning('请至少添加一个涉及角色或涉及组织');
         setLoading(false);
         return;
       }
@@ -135,6 +144,7 @@ export default function ExpansionPlanEditor({
         summary: values.summary,
         key_events: keyEvents,
         character_focus: characters,
+        organization_focus: organizations.length > 0 ? organizations : undefined,
         emotional_tone: values.emotional_tone,
         narrative_goal: values.narrative_goal,
         conflict_type: values.conflict_type,
@@ -156,6 +166,7 @@ export default function ExpansionPlanEditor({
     form.resetFields();
     setKeyEvents([]);
     setCharacters([]);
+    setOrganizations([]);
     setKeyEventInput('');
     onCancel();
   };
@@ -264,7 +275,7 @@ export default function ExpansionPlanEditor({
               }
               options={Array.isArray(availableCharacters)
                 ? availableCharacters
-                    .filter(char => !characters.includes(char.name))
+                    .filter(char => !char.is_organization && !characters.includes(char.name))
                     .map(char => ({
                       label: char.name,
                       value: char.name,
@@ -273,19 +284,66 @@ export default function ExpansionPlanEditor({
               notFoundContent={
                 loadingCharacters ? '加载中...' :
                 !Array.isArray(availableCharacters) ? '加载角色失败' :
-                availableCharacters.length === 0 ? '暂无角色，请先在角色管理中创建' :
+                availableCharacters.filter(char => !char.is_organization).length === 0 ? '暂无角色，请先在角色管理中创建' :
                 '所有角色已添加'
               }
             />
             <Space wrap>
               {characters.map((char, idx) => (
                 <Tag
-                  key={idx}
+                  key={char}
                   closable
                   onClose={() => setCharacters(characters.filter((_, i) => i !== idx))}
                   color="cyan"
                 >
                   {char}
+                </Tag>
+              ))}
+            </Space>
+          </Space>
+        </Form.Item>
+
+        {/* 涉及组织 */}
+        <Form.Item
+          label="涉及组织"
+          tooltip="从项目现有组织中选择"
+        >
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Select
+              placeholder="选择组织"
+              style={{ width: '100%' }}
+              loading={loadingCharacters}
+              onChange={handleAddOrganization}
+              value={undefined}
+              showSearch
+              optionFilterProp="children"
+              filterOption={(input, option) =>
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              options={Array.isArray(availableCharacters)
+                ? availableCharacters
+                    .filter(char => char.is_organization && !organizations.includes(char.name))
+                    .map(char => ({
+                      label: char.name,
+                      value: char.name,
+                    }))
+                : []}
+              notFoundContent={
+                loadingCharacters ? '加载中...' :
+                !Array.isArray(availableCharacters) ? '加载组织失败' :
+                availableCharacters.filter(char => char.is_organization).length === 0 ? '暂无组织，请先在角色管理中创建' :
+                '所有组织已添加'
+              }
+            />
+            <Space wrap>
+              {organizations.map((org, idx) => (
+                <Tag
+                  key={org}
+                  closable
+                  onClose={() => setOrganizations(organizations.filter((_, i) => i !== idx))}
+                  color="geekblue"
+                >
+                  {org}
                 </Tag>
               ))}
             </Space>

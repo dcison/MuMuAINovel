@@ -135,6 +135,7 @@ class OneToManyContext:
     # === P1-重要信息 ===
     chapter_characters: str = ""        # 完整版角色信息（含年龄、外貌、背景、关系、组织）
     chapter_careers: Optional[str] = None  # 独立的职业详情（含完整阶段体系）
+    chapter_organizations: Optional[str] = None  # 独立的组织信息（含组织类型、目的、成员）
     emotional_tone: str = ""
     
     # === P2-参考信息 ===
@@ -329,14 +330,16 @@ class OneToManyContextBuilder:
         
         # === P1-重要信息 ===
         # 角色信息（完整版：含年龄、外貌、背景、关系、组织、职业）+ 独立职业详情
-        characters_info, careers_info = await self._build_chapter_characters_1n(
+        characters_info, careers_info, organizations_info = await self._build_chapter_characters_1n(
             chapter, project, outline, db
         )
         context.chapter_characters = characters_info
         context.chapter_careers = careers_info
+        context.chapter_organizations = organizations_info
         context.emotional_tone = self._extract_emotional_tone(chapter, outline)
         logger.info(f"  ✅ 角色信息: {len(context.chapter_characters)}字符")
         logger.info(f"  ✅ 职业信息: {len(context.chapter_careers or '')}字符")
+        logger.info(f"  ✅ 组织信息: {len(context.chapter_organizations or '')}字符")
         
         # === P2-参考信息（始终启用）===
         if self.memory_service:
@@ -684,7 +687,57 @@ class OneToManyContextBuilder:
             careers_result_str = "\n\n".join(careers_info_parts)
             logger.info(f"  ✅ [1-N完整版] 构建了 {len(careers_map)} 个职业详情，总长度: {len(careers_result_str)} 字符")
         
-        return characters_result_str, careers_result_str
+        # === 构建独立组织信息 ===
+        organizations_info_parts = []
+        
+        # 从 expansion_plan 中提取组织焦点
+        org_focus_names = []
+        if chapter.expansion_plan:
+            try:
+                plan = json.loads(chapter.expansion_plan)
+                org_focus_names = plan.get('organization_focus', [])
+            except json.JSONDecodeError:
+                pass
+        
+        # 查询组织详情
+        if org_focus_names:
+            org_chars_result = await db.execute(
+                select(Character).where(
+                    Character.project_id == project.id,
+                    Character.name.in_(org_focus_names),
+                    Character.is_organization == True
+                )
+            )
+            org_chars = org_chars_result.scalars().all()
+            
+            for org in org_chars:
+                org_lines = [f"【{org.name}】(组织)"]
+                if org.organization_type:
+                    org_lines.append(f"  组织类型: {org.organization_type}")
+                if org.organization_purpose:
+                    org_lines.append(f"  组织目的: {org.organization_purpose[:200]}")
+                if org.personality:
+                    org_lines.append(f"  组织特性: {org.personality[:150]}")
+                
+                # 查询组织成员
+                org_members_result = await db.execute(
+                    select(OrganizationMember, Character.name).join(
+                        Character, OrganizationMember.character_id == Character.id
+                    ).where(OrganizationMember.organization_id == org.id)
+                )
+                members = org_members_result.all()
+                if members:
+                    member_parts = [f"{name}（{m.position}）" for m, name in members[:8]]
+                    org_lines.append(f"  核心成员: {'、'.join(member_parts)}")
+                
+                organizations_info_parts.append("\n".join(org_lines))
+        
+        organizations_result_str = None
+        if organizations_info_parts:
+            organizations_result_str = "\n\n".join(organizations_info_parts)
+            logger.info(f"  ✅ [1-N完整版] 构建了 {len(organizations_info_parts)} 个组织信息，总长度: {len(organizations_result_str)} 字符")
+        
+        return characters_result_str, careers_result_str, organizations_result_str
     
     async def _build_recent_chapters_context(
         self,

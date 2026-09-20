@@ -58,6 +58,7 @@ export default function Chapters() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
+  const [regenerateFromPositionForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const contentTextAreaRef = useRef<TextAreaRef>(null);
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
@@ -141,6 +142,10 @@ export default function Chapters() {
     () => (currentProject?.id ? `mumuai_batch_ref_chapters_${currentProject.id}` : ''),
     [currentProject?.id]
   );
+
+   // 单章生成对话框状态
+  const [singleAutoAnalysis, setSingleAutoAnalysis] = useState(true);
+  const [singleAutoCreateForeshadow, setSingleAutoCreateForeshadow] = useState(true);
 
   useEffect(() => {
     const handleResize = () => {
@@ -931,10 +936,6 @@ export default function Chapters() {
     }
     return '已埋入';
   };
-
-  // 单章生成对话框状态
-  const [singleAutoAnalysis, setSingleAutoAnalysis] = useState(true);
-  const [singleAutoCreateForeshadow, setSingleAutoCreateForeshadow] = useState(true);
 
   const openGenerateDialog = (chapter: Chapter, mode: 'stream' | 'background' = 'stream') => {
     const previousChapters = chapters.filter(
@@ -1977,6 +1978,84 @@ export default function Chapters() {
     }
   };
 
+  const handleOpenRegenerateFromPosition = (chapter: Chapter) => {
+    modal.confirm({
+      title: (
+        <Space>
+          <SyncOutlined />
+          <span>重新AI生成后续章节</span>
+        </Space>
+      ),
+      width: 600,
+      centered: true,
+      content: (
+        <div>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`将从第${chapter.chapter_number}章开始重新生成后续章节，并自动顺移后面的章节编号。`}
+          />
+          <Form
+            form={regenerateFromPositionForm}
+            layout="vertical"
+            initialValues={{
+              target_chapter_count: 3,
+              expansion_strategy: 'balanced',
+            }}
+          >
+            <Form.Item
+              label="重新生成章节数"
+              name="target_chapter_count"
+              rules={[{ required: true, message: '请输入章节数' }]}
+            >
+              <InputNumber min={1} max={10} style={{ width: '100%' }} />
+            </Form.Item>
+
+            <Form.Item
+              label="展开策略"
+              name="expansion_strategy"
+            >
+              <Radio.Group>
+                <Radio.Button value="balanced">均衡分配</Radio.Button>
+                <Radio.Button value="climax">高潮重点</Radio.Button>
+                <Radio.Button value="detail">细节丰富</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+          </Form>
+        </div>
+      ),
+      okText: '开始生成',
+      cancelText: '取消',
+      onOk: () => {
+        // 返回 Promise：验证通过则立即关闭 modal，验证失败则保持打开
+        return new Promise<void>((resolve, reject) => {
+          regenerateFromPositionForm.validateFields().then((values) => {
+            // 提交后台任务，立即返回 task_id
+            chapterApi.regenerateFromPosition(chapter.id, {
+              target_chapter_count: values.target_chapter_count,
+              expansion_strategy: values.expansion_strategy,
+            }).then(() => {
+              // 后台任务已创建，提示用户可在浮窗中查看进度
+              message.success('重新生成任务已提交，请在右下角后台任务面板查看进度');
+              // 通知 FloatingTaskPanel 有新任务
+              eventBus.emit('background-task-created');
+            }).catch((error: unknown) => {
+              const err = error as Error;
+              message.error(err.message || '重新生成失败');
+            });
+
+            // 立即关闭 modal
+            resolve();
+          }).catch((validateError) => {
+            // 验证失败，保持 modal 打开
+            reject(validateError);
+          });
+        });
+      },
+    });
+  };
+
   // 打开规划编辑器
   const handleOpenPlanEditor = (chapter: Chapter) => {
     // 直接打开编辑器,如果没有规划数据则创建新的
@@ -2184,6 +2263,13 @@ export default function Chapters() {
                   >
                     编辑
                   </Button>,
+                  <Button
+                    type="text"
+                    icon={<SyncOutlined />}
+                    onClick={() => handleOpenRegenerateFromPosition(item)}
+                  >
+                    重新AI生成
+                  </Button>,
                   (() => {
                     const task = analysisTasksMap[item.id];
                     const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
@@ -2270,6 +2356,13 @@ export default function Chapters() {
                         size="small"
                         title="编辑"
                       />
+                      <Button
+                        type="text"
+                        icon={<SyncOutlined />}
+                        onClick={() => handleOpenRegenerateFromPosition(item)}
+                        size="small"
+                        title="重新AI生成"
+                      />
                       {(() => {
                         const task = analysisTasksMap[item.id];
                         const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
@@ -2325,11 +2418,11 @@ export default function Chapters() {
                       {group.outlineTitle}
                     </span>
                     <Badge
-                      count={`${group.chapters.length} 章`}
+                      count={`${filteredSortedChapters.length} 章`}
                       style={{ backgroundColor: token.colorSuccess }}
                     />
                     <Badge
-                      count={`${group.chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0)} 字`}
+                      count={`${filteredSortedChapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0)} 字`}
                       style={{ backgroundColor: token.colorPrimary }}
                     />
                   </div>
@@ -2369,6 +2462,13 @@ export default function Chapters() {
                           onClick={() => handleOpenEditor(item.id)}
                         >
                           编辑
+                        </Button>,
+                        <Button
+                          type="text"
+                          icon={<SyncOutlined />}
+                          onClick={() => handleOpenRegenerateFromPosition(item)}
+                        >
+                          重新AI生成
                         </Button>,
                         (() => {
                           const task = analysisTasksMap[item.id];
@@ -2494,6 +2594,13 @@ export default function Chapters() {
                               onClick={() => handleOpenEditor(item.id)}
                               size="small"
                               title="编辑"
+                            />
+                            <Button
+                              type="text"
+                              icon={<SyncOutlined />}
+                              onClick={() => handleOpenRegenerateFromPosition(item)}
+                              size="small"
+                              title="重新AI生成"
                             />
                             {(() => {
                               const task = analysisTasksMap[item.id];

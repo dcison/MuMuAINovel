@@ -5,7 +5,7 @@ import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { useOutlineSync } from '../store/hooks';
-import { generateOutlineBackground } from '../services/backgroundTaskService';
+import { generateOutlineBackground, regenerateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
 import type { ApiError, Character, ExpansionPlanData } from '../types';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -15,7 +15,7 @@ interface OutlineGenerateRequestData {
   project_id: string;
   genre: string;
   theme: string;
-  chapter_count: number;
+  volume_count: number;
   narrative_perspective: string;
   target_words: number;
   requirements?: string;
@@ -71,6 +71,7 @@ interface OutlineStructureData {
   key_points?: string[];
   characters_involved?: string[];
   characters?: unknown[];
+  organizations?: unknown[];
   scenes?: string[] | Array<{
     location: string;
     characters: string[];
@@ -264,9 +265,28 @@ export default function Outline() {
       const structureData = outlineStructureMap[outline.id] || {};
       
       // 解析角色/组织条目（兼容新旧格式）
+      // 注意：AI 返回的数据中 characters 和 organizations 是两个独立字段
       const editEntries = parseCharacterEntries(structureData.characters);
-      const editCharNames = getCharacterNames(editEntries);
-      const editOrgNames = getOrganizationNames(editEntries);
+      
+      // 单独处理 organizations 字段
+      const orgEntries: CharacterEntry[] = [];
+      if (Array.isArray(structureData.organizations)) {
+        for (const org of structureData.organizations) {
+          if (typeof org === 'string' && org.trim()) {
+            orgEntries.push({ name: org.trim(), type: 'organization' });
+          } else if (typeof org === 'object' && org !== null && 'name' in org) {
+            orgEntries.push({ 
+              name: (org as { name: string }).name, 
+              type: 'organization' 
+            });
+          }
+        }
+      }
+      
+      // 合并角色和组织条目
+      const allEntries = [...editEntries, ...orgEntries];
+      const editCharNames = getCharacterNames(allEntries);
+      const editOrgNames = getOrganizationNames(allEntries);
       
       // 处理场景数据 - 可能是字符串数组或对象数组
       let scenesText = '';
@@ -308,6 +328,7 @@ export default function Outline() {
           }
         },
         content: (
+          <>
           <Form
             form={editForm}
             layout="vertical"
@@ -404,8 +425,21 @@ export default function Outline() {
               <Input placeholder="例如：建立世界观对比并完成主角初遇" />
             </Form.Item>
           </Form>
+          <div style={{ marginTop: 16, textAlign: 'center' }}>
+            <Button
+              type="dashed"
+              block
+              icon={<ThunderboltOutlined />}
+              onClick={() => {
+                handleRegenerateVolume(id);
+              }}
+            >
+              AI重新生成
+            </Button>
+          </div>
+          </>
         ),
-        okText: '更新',
+        okText: '保存',
         cancelText: '取消',
         onOk: async () => {
           const values = await editForm.validateFields();
@@ -492,6 +526,55 @@ export default function Outline() {
     }
   };
 
+
+  const handleRegenerateVolume = async (id: string) => {
+    try {
+      const values = await editForm.validateFields();
+      // 关闭当前编辑弹窗
+      Modal.destroyAll();
+      message.info('AI正在重新生成卷纲，可在右下角任务面板查看进度');
+
+      // 处理场景数据（TextArea中存储为字符串）
+      let scenesArr: string[] = [];
+      if (values.scenes && typeof values.scenes === 'string') {
+        scenesArr = values.scenes.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+      }
+
+      // 处理情节要点（TextArea中存储为字符串）
+      const keyPoints = values.key_points && typeof values.key_points === 'string'
+        ? values.key_points.split('\n').map((l: string) => l.trim()).filter((l: string) => l)
+        : [];
+
+      await regenerateOutlineBackground(
+        id,
+        {
+          title: values.title,
+          content: values.content,
+          characters: values.characters || [],
+          organizations: values.organizations || [],
+          scenes: scenesArr,
+          key_points: keyPoints,
+          emotion: values.emotion || '',
+          goal: values.goal || '',
+        },
+        () => { /* progress handled by floating task panel */ },
+        () => {
+          message.success('卷纲重新生成完成！');
+          // 刷新大纲列表以获取最新数据
+          refreshOutlines().then(() => {
+            handleOpenEditModal(id);
+          });
+        },
+        (error) => {
+          message.error(`重新生成失败: ${error}`);
+        }
+      );
+      eventBus.emit('background-task-created');
+    } catch {
+      message.error('请填写必填字段后再试');
+    }
+  };
+
   const handleDeleteOutline = async (id: string) => {
     try {
       await deleteOutline(id);
@@ -509,7 +592,8 @@ export default function Outline() {
 
   interface GenerateFormValues {
     theme?: string;
-    chapter_count?: number;
+    volume_count?: number;
+    target_words?: number;
     narrative_perspective?: string;
     requirements?: string;
     provider?: string;
@@ -538,9 +622,9 @@ export default function Outline() {
         project_id: currentProject.id,
         genre: currentProject.genre || '通用',
         theme: values.theme || currentProject.theme || '',
-        chapter_count: values.chapter_count || 5,
+        volume_count: values.volume_count || 5,
+        target_words: values.target_words || currentProject.target_words || 100000,
         narrative_perspective: values.narrative_perspective || currentProject.narrative_perspective || '第三人称',
-        target_words: currentProject.target_words || 100000,
         requirements: values.requirements,
         mode: values.mode || 'auto',
         story_direction: values.story_direction,
@@ -565,14 +649,14 @@ export default function Outline() {
       console.log('=========================');
 
       // 使用后台任务生成（不怕断连，关闭浏览器也继续运行）
-      // 不再强制显示进度弹窗，任务进度在右下角悬浮任务框中显示
-      await generateOutlineBackground(
+      // 这里必须在任务创建成功后立刻解除 loading 状态，否则前端会一直显示“等待中”
+      const cancelTask = await generateOutlineBackground(
         requestData,
         () => {
           // 进度更新由悬浮任务框处理，无需额外操作
         },
         (result) => {
-          message.success(result.task_result?.message as string || '大纲生成完成！');
+          message.success((result.task_result?.message as string) || '大纲生成完成！');
           setIsGenerating(false);
           refreshOutlines();
         },
@@ -581,6 +665,10 @@ export default function Outline() {
           setIsGenerating(false);
         }
       );
+
+      // 任务已提交到后台，立即结束前端等待状态，不再卡住按钮
+      setIsGenerating(false);
+      void cancelTask;
 
       message.info('大纲生成任务已提交，可在右下角任务面板查看进度');
       // 通知悬浮任务框刷新
@@ -638,7 +726,7 @@ export default function Outline() {
           style={{ marginTop: 16 }}
           initialValues={{
             mode: initialMode,
-            chapter_count: 5,
+            volume_count: 5,
             narrative_perspective: currentProject.narrative_perspective || '第三人称',
             plot_stage: 'development',
             keep_existing: true,
@@ -724,17 +812,33 @@ export default function Outline() {
                   )}
 
                   <Form.Item
-                    label={isContinue ? "续写章节数" : "章节数量"}
-                    name="chapter_count"
-                    rules={[{ required: true, message: '请输入章节数量' }]}
+                    label={isContinue ? "续写卷数" : "卷纲数量"}
+                    name="volume_count"
+                    rules={[{ required: true, message: '请输入卷纲数量' }]}
                   >
                     <Input
                       type="number"
                       min={1}
-                      max={50}
-                      placeholder={isContinue ? "建议5-10章" : "如：30"}
+                      max={20}
+                      placeholder={isContinue ? "建议3-5卷" : "如：5"}
                     />
                   </Form.Item>
+
+                  {!isContinue && (
+                    <Form.Item
+                      label="总目标字数"
+                      name="target_words"
+                      tooltip="AI将根据总字数自动分配到各卷"
+                    >
+                      <Input
+                        type="number"
+                        min={10000}
+                        step={10000}
+                        placeholder="如：100000"
+                        addonAfter="字"
+                      />
+                    </Form.Item>
+                  )}
 
                   <Form.Item
                     label="叙事视角"
@@ -999,9 +1103,7 @@ export default function Outline() {
               >
                 <InputNumber
                   min={2}
-                  max={10}
                   style={{ width: '100%' }}
-                  placeholder="建议2-5章"
                 />
               </Form.Item>
 
@@ -1034,10 +1136,12 @@ export default function Outline() {
               enable_scene_analysis: true
             };
 
-            const response = await fetch(`/api/outlines/${outlineId}/expand-background`, {
+            const requestDataWithIds = { ...requestData, chapters_per_outline: requestData.target_chapter_count, outline_ids: [outlineId], project_id: currentProject.id };
+
+            const response = await fetch(`/api/outlines/batch-expand-background`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(requestData),
+              body: JSON.stringify(requestDataWithIds),
             });
 
             if (!response.ok) {
@@ -1281,7 +1385,7 @@ export default function Outline() {
 
                     <Card size="small" title="关键事件">
                       <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                        {plan.key_events.map((event, eventIdx) => (
+                        {(Array.isArray(plan.key_events) ? plan.key_events : []).map((event, eventIdx) => (
                           <div
                             key={eventIdx}
                             style={{
@@ -1298,7 +1402,7 @@ export default function Outline() {
 
                     <Card size="small" title="涉及角色">
                       <Space wrap style={{ maxWidth: '100%' }}>
-                        {plan.character_focus.map((char, charIdx) => (
+                        {(Array.isArray(plan.character_focus) ? plan.character_focus : []).map((char, charIdx) => (
                           <Tag
                             key={charIdx}
                             color="purple"
@@ -1318,7 +1422,7 @@ export default function Outline() {
                     {plan.scenes && plan.scenes.length > 0 && (
                       <Card size="small" title="场景">
                         <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                          {plan.scenes.map((scene, sceneIdx) => (
+                          {(Array.isArray(plan.scenes) ? plan.scenes : []).map((scene, sceneIdx) => (
                             <Card
                               key={sceneIdx}
                               size="small"
@@ -1340,7 +1444,7 @@ export default function Outline() {
                                 whiteSpace: 'normal',
                                 overflowWrap: 'break-word'
                               }}>
-                                <strong>角色：</strong>{scene.characters.join('、')}
+                                <strong>角色：</strong>{Array.isArray(scene.characters) ? scene.characters.join('、') : String(scene.characters || '')}
                               </div>
                               <div style={{
                                 wordBreak: 'break-word',
@@ -1474,10 +1578,17 @@ export default function Outline() {
             enable_scene_analysis: true
           };
 
+          const requestDataWithIds = {
+            ...requestData,
+            chapters_per_outline: requestData.target_chapter_count,
+            outline_ids: [currentProject.id],
+            project_id: currentProject.id,
+          };
+
           const response = await fetch('/api/outlines/batch-expand-background', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestData),
+            body: JSON.stringify(requestDataWithIds),
           });
 
           if (!response.ok) {

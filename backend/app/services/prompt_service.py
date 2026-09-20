@@ -337,22 +337,18 @@ class PromptService:
 ❌ 在描述中使用特殊符号
 </constraints>"""
 
-    # 大纲生成提示词 V2（RTCO框架）
+    # 卷纲概要生成 V4（轻量级 - 一次性生成所有卷的概要）
     OUTLINE_CREATE = """<system>
-你是经验丰富的小说作家和编剧，擅长为{genre}类型的小说设计精彩开篇。
+你是资深网文总编与故事架构师，擅长为{genre}类型的长篇小说设计卷纲级故事骨架。
 </system>
 
 <task>
 【创作任务】
-为小说《{title}》生成开篇{chapter_count}章的大纲。
+为小说《{title}》生成{volume_count}个卷纲概要，将{target_words}字总字数合理分配到各卷。
 
 【重要说明】
-这是项目初始化的开头部分，不是完整大纲：
-- 完成开局设定和世界观展示
-- 引入主要角色，建立初始关系
-- 埋下核心矛盾和悬念钩子
-- 为后续剧情发展打下基础
-- 不需要完整闭环，为续写留空间
+你生成的是「卷纲概要」——每个卷纲代表小说的一个大剧情阶段。
+本步骤只生成概要信息，后续每个卷纲会被单独展开为详细规划。
 </task>
 
 <project priority="P0">
@@ -360,7 +356,8 @@ class PromptService:
 书名：{title}
 主题：{theme}
 类型：{genre}
-开篇章节数：{chapter_count}
+卷纲数量：{volume_count}卷
+总字数：{target_words}字
 叙事视角：{narrative_perspective}
 </project>
 
@@ -377,10 +374,6 @@ class PromptService:
 {characters_info}
 </characters>
 
-<mcp_context priority="P2">
-{mcp_references}
-</mcp_context>
-
 <requirements priority="P1">
 【其他要求】
 {requirements}
@@ -388,80 +381,252 @@ class PromptService:
 
 <output priority="P0">
 【输出格式】
-返回包含{chapter_count}个章节对象的JSON数组：
+返回包含{volume_count}个卷纲概要的JSON数组：
 
 [
   {{
-   "chapter_number": 1,
-   "title": "章节标题",
-   "summary": "章节概要（500-1000字）：主要情节、角色互动、关键事件、冲突与转折",
-   "scenes": ["场景1描述", "场景2描述", "场景3描述"],
-   "characters": [
-     {{"name": "角色名1", "type": "character"}},
-     {{"name": "组织/势力名1", "type": "organization"}}
-   ],
-   "key_points": ["情节要点1", "情节要点2"],
-   "emotion": "本章情感基调",
-   "goal": "本章叙事目标"
+   "volume_number": 1,
+   "title": "卷标题（如：第一卷 风起青萍）",
+   "phase": "剧情阶段（如：开端/发展/转折/高潮/结局）",
+   "summary": "卷纲概要（100-200字）：本卷的核心剧情定位、主要冲突、关键转折",
+   "key_points": ["本卷关键事件1", "本卷关键事件2", "本卷关键事件3"],
+   "characters": ["柳若霜", "苏晚棠", "墨渊"],
+   "organizations": ["逆命", "测灵圣殿"],
+   "scenes": ["场景1描述", "场景2描述"],
+   "emotion": "本卷情感基调（如：紧张/温馨/悲壮/激昂）",
+   "goal": "本卷的整体叙事目标",
+   "estimated_words": 20000,
+   "narrative_goal": "本卷的整体叙事目标"
  }},
  {{
-   "chapter_number": 2,
-   "title": "章节标题",
-   "summary": "章节概要...",
-   "scenes": ["场景1", "场景2"],
-   "characters": [
-     {{"name": "角色名2", "type": "character"}},
-     {{"name": "组织名2", "type": "organization"}}
-   ],
-   "key_points": ["要点1", "要点2"],
-   "emotion": "情感基调",
-   "goal": "叙事目标"
+   "volume_number": 2,
+   "title": "卷标题",
+   "phase": "剧情阶段",
+   "summary": "卷纲概要...",
+   "key_points": ["本卷关键事件1", "本卷关键事件2"],
+   "characters": ["角色A"],
+   "organizations": ["组织1"],
+   "scenes": ["场景1描述"],
+   "emotion": "本卷情感基调",
+   "goal": "叙事目标",
+   "estimated_words": 25000,
+   "narrative_goal": "叙事目标"
  }}
 ]
 
-【characters字段说明】
-- type为"character"表示个人角色，type为"organization"表示组织/势力/门派/帮派等
-- 必须区分角色和组织，不要把组织当作角色
+【字数分配原则】
+- 总字数必须等于{target_words}字
+- 根据剧情阶段合理分配：开端卷约占15-20%，发展卷约占30-40%，高潮卷约占25-35%，结局卷约占10-20%
 
 【格式规范】
 - 纯JSON数组输出，无markdown标记
-- 内容描述中严禁使用特殊符号
-- 专有名词直接书写
-- 字段结构与已有章节完全一致
+- summary控制在100-200字（本步骤为概要，非详细描述）
 </output>
 
 <constraints>
-【开篇大纲要求】
-✅ 开局设定：前几章完成世界观呈现、主角登场、初始状态
-✅ 矛盾引入：引出核心冲突，但不急于展开
-✅ 角色亮相：主要角色依次登场，展示性格和关系
-✅ 节奏控制：开篇不宜过快，给读者适应时间
-✅ 悬念设置：埋下伏笔和钩子，为续写预留空间
-✅ 视角统一：采用{narrative_perspective}视角
-✅ 留白艺术：结尾不收束过紧，留发展空间
+✅ 数量精确：数组包含{volume_count}个卷纲
+✅ 字数精确：所有estimated_words之和 = {target_words}
+✅ 结构完整：构成完整的故事骨架，有起承转合
+✅ 类型契合：符合{genre}类型特征
 
-【必须遵守】
-✅ 数量精确：数组包含{chapter_count}个章节对象
-✅ 符合类型：情节符合{genre}类型特征
-✅ 主题贴合：体现主题"{theme}"
-✅ 开篇定位：是开局而非完整故事
-✅ 描述详细：每个summary 500-1000字
-
-【禁止事项】
+❌ 不要尝试在本步骤写详细剧情（每卷summary控制在200字以内）
 ❌ 输出markdown或代码块标记
-❌ 在描述中使用特殊符号
-❌ 试图在开篇完结故事
-❌ 节奏过快，信息过载
 </constraints>"""
-    
-    # 大纲续写提示词 V2（RTCO框架 - 简化版）
+
+
+
+    # 单卷详细展开 V4（逐卷生成详细内容）
+    OUTLINE_EXPAND_VOLUME = """<system>
+你是资深网文总编与故事架构师，擅长将卷纲概要展开为详细的卷纲规划。
+</system>
+
+<task>
+【展开任务】
+将第{volume_number}卷《{volume_title}》展开为详细的卷纲规划。
+
+【定位】
+本卷属于「{phase}」阶段，规划字数约{estimated_words}字。
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+</worldview>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<context priority="P1">
+【上下文参考】
+上一卷概要：{previous_volume_summary}
+下一卷概要：{next_volume_summary}
+</context>
+
+<volume_brief priority="P0">
+【当前卷概要 - 展开对象】
+卷序号：第 {volume_number} 卷
+标题：{volume_title}
+概要：{volume_summary}
+叙事目标：{narrative_goal}
+</volume_brief>
+
+<output priority="P0">
+【输出格式】
+返回单个卷纲的详细JSON对象：
+
+{{
+  "volume_number": {volume_number},
+  "title": "{volume_title}",
+  "phase": "{phase}",
+  "summary": "详细卷纲概要（800-1500字）：详细描述本卷的核心剧情线、主要冲突、关键转折、角色成长变化、伏笔与悬念。确保内容足够丰富，作为后续章纲展开的依据。",
+  "key_points": ["本卷关键事件1", "本卷关键事件2", "本卷关键事件3", "本卷关键事件4"],
+  "characters": ["柳若霜", "苏晚棠", "墨渊"],
+  "organizations": ["逆命", "测灵圣殿"],
+  "scenes": ["场景1描述", "场景2描述"],
+  "emotion": "本卷情感基调（如：紧张/温馨/悲壮/激昂）",
+  "goal": "{narrative_goal}",
+  "estimated_words": {estimated_words},
+  "narrative_goal": "{narrative_goal}"
+}}
+
+【格式规范】
+- 纯JSON对象输出（非数组），无markdown标记
+- summary必须详细（800-1500字），包含足够剧情细节
+- key_events至少3个，描述具体事件
+- character_arcs至少2个，描述角色变化
+</output>
+
+<constraints>
+✅ 内容充实：summary 800-1500字，包含足够剧情细节
+✅ 承上启下：参考上下卷概要，确保剧情连贯
+✅ 角色发展：体现角色在本卷的成长变化
+✅ 伏笔设计：为下一卷预留衔接点
+✅ 类型契合：符合{genre}类型的叙事特征
+
+❌ 不要写章纲级别的场景描述
+❌ 不要越界到上下卷的剧情
+❌ 输出markdown或代码块标记
+</constraints>"""
+
+
+
+
+    # 单卷重新生成（基于当前字段 + 全局信息重新生成卷纲）
+    OUTLINE_REGENERATE_VOLUME = """<system>
+你是资深网文总编与故事架构师，擅长根据已有设定重新生成更丰富的卷纲规划。
+</system>
+
+<task>
+【重新生成任务】
+根据用户提供的当前卷纲字段和项目全局信息，重新生成本卷的详细卷纲规划。
+
+【说明】
+用户已经填写了本卷的基本信息，你的任务是结合世界观、角色等全局信息，
+重新生成更丰富、更详细的卷纲内容。保留用户设定的核心方向，但可以优化和扩展。
+</task>
+
+<project priority="P0">
+【项目信息】
+书名：{title}
+主题：{theme}
+类型：{genre}
+叙事视角：{narrative_perspective}
+</project>
+
+<worldview priority="P1">
+【世界观】
+时间背景：{time_period}
+地理位置：{location}
+氛围基调：{atmosphere}
+世界规则：{rules}
+气候环境：{climate}
+服饰风格：{clothing}
+</worldview>
+
+<characters priority="P1">
+【角色信息】
+{characters_info}
+</characters>
+
+<context priority="P1">
+【上下文参考】
+上一卷概要：{previous_volume_summary}
+下一卷概要：{next_volume_summary}
+</context>
+
+<current_volume priority="P0">
+【当前卷信息 - 重新生成对象】
+卷序号：第 {volume_number} 卷
+标题：{volume_title}
+当前概要：{current_summary}
+当前情感基调：{current_emotion}
+当前叙事目标：{current_goal}
+当前涉及角色：{current_characters}
+当前涉及组织：{current_organizations}
+当前场景信息：{current_scenes}
+当前情节要点：{current_key_points}
+</current_volume>
+
+<output priority="P0">
+【输出格式】
+返回单个卷纲的详细JSON对象：
+
+{{
+  "volume_number": {volume_number},
+  "title": "卷标题（可优化，保留核心含义）",
+  "phase": "剧情阶段（如：开端/发展/转折/高潮/结局）",
+  "summary": "详细卷纲概要（800-1500字）：详细描述本卷的核心剧情线、主要冲突、关键转折、角色成长变化、伏笔与悬念。确保内容足够丰富，作为后续章纲展开的依据。",
+  "key_points": ["本卷关键事件1", "本卷关键事件2", "本卷关键事件3", "本卷关键事件4"],
+  "characters": ["角色A", "角色B", "角色C"],
+  "organizations": ["组织1", "组织2"],
+  "scenes": ["场景1描述", "场景2描述"],
+  "emotion": "本卷情感基调（如：紧张/温馨/悲壮/激昂）",
+  "goal": "本卷的整体叙事目标",
+  "estimated_words": {estimated_words},
+  "narrative_goal": "本卷的整体叙事目标"
+}}
+
+【格式规范】
+- 纯JSON对象输出（非数组），无markdown标记
+- summary必须详细（800-1500字），包含足够剧情细节
+- key_points至少3个，描述具体事件
+- 保留用户设定的核心方向，优化和扩展细节
+</output>
+
+<constraints>
+✅ 内容充实：summary 800-1500字，包含足够剧情细节
+✅ 保留方向：保留用户设定的标题、角色、情感基调、叙事目标等核心方向
+✅ 承上启下：参考上下卷概要，确保剧情连贯
+✅ 角色发展：体现角色在本卷的成长变化
+✅ 伏笔设计：为下一卷预留衔接点
+✅ 类型契合：符合{genre}类型的叙事特征
+
+❌ 不要写章纲级别的场景描述
+❌ 不要越界到上下卷的剧情
+❌ 输出markdown或代码块标记
+</constraints>"""
+
+    # 卷纲续写提示词 V3（卷纲级别续写）
     OUTLINE_CONTINUE = """<system>
-你是经验丰富的小说作家和编剧，擅长续写{genre}类型的小说大纲。
+你是资深网文总编与故事架构师，擅长续写{genre}类型的小说卷纲。
 </system>
 
 <task>
 【续写任务】
-基于已有{current_chapter_count}章内容，续写第{start_chapter}章到第{end_chapter}章的大纲（共{chapter_count}章）。
+基于已有{current_chapter_count}个卷纲，续写第{start_chapter}卷到第{end_chapter}卷（共{chapter_count}卷）。
 
 【当前情节阶段】
 {plot_stage_instruction}
@@ -497,7 +662,7 @@ class PromptService:
 
 <user_input priority="P0">
 【用户输入】
-续写章节数：{chapter_count}章
+续写卷数：{chapter_count}卷
 情节阶段：{plot_stage_instruction}
 故事方向：{story_direction}
 其他要求：{requirements}
@@ -509,46 +674,36 @@ class PromptService:
 
 <output priority="P0">
 【输出格式】
-返回第{start_chapter}到第{end_chapter}章的JSON数组（共{chapter_count}个对象）：
+返回第{start_chapter}到第{end_chapter}卷的JSON数组（共{chapter_count}个对象）：
 
 [
   {{
-   "chapter_number": {start_chapter},
-   "title": "章节标题",
-   "summary": "章节概要（500-1000字）：主要情节、角色互动、关键事件、冲突与转折",
-   "scenes": ["场景1描述", "场景2描述", "场景3描述"],
-   "characters": [
-     {{"name": "角色名1", "type": "character"}},
-     {{"name": "组织/势力名1", "type": "organization"}}
-   ],
-   "key_points": ["情节要点1", "情节要点2"],
-   "emotion": "本章情感基调",
-   "goal": "本章叙事目标"
+   "volume_number": {start_chapter},
+   "title": "卷标题",
+   "phase": "剧情阶段",
+   "summary": "卷纲概要（800-1500字）：详细描述本卷的核心剧情线、主要冲突、关键转折、角色成长变化、伏笔与悬念。",
+   "key_events": ["本卷关键事件1", "本卷关键事件2", "本卷关键事件3"],
+   "character_arcs": ["角色A在本卷的成长/变化", "角色B在本卷的成长/变化"],
+   "estimated_words": 20000,
+   "narrative_goal": "本卷的整体叙事目标"
  }},
  {{
-   "chapter_number": {start_chapter} + 1,
-   "title": "章节标题",
-   "summary": "章节概要...",
-   "scenes": ["场景1", "场景2"],
-   "characters": [
-     {{"name": "角色名2", "type": "character"}},
-     {{"name": "组织名2", "type": "organization"}}
-   ],
-   "key_points": ["要点1", "要点2"],
-   "emotion": "情感基调",
-   "goal": "叙事目标"
+   "volume_number": {start_chapter} + 1,
+   "title": "卷标题",
+   "phase": "剧情阶段",
+   "summary": "卷纲概要...",
+   "key_events": ["关键事件1", "关键事件2"],
+   "character_arcs": ["角色发展1", "角色发展2"],
+   "estimated_words": 25000,
+   "narrative_goal": "叙事目标"
  }}
 ]
-
-【characters字段说明】
-- type为"character"表示个人角色，type为"organization"表示组织/势力/门派/帮派等
-- 必须区分角色和组织，不要把组织当作角色
 
 【格式规范】
 - 纯JSON数组输出，无markdown标记
 - 内容描述中严禁使用特殊符号
 - 专有名词直接书写
-- 字段结构与已有章节完全一致
+- 字段结构与已有卷纲完全一致
 </output>
 
 <constraints>
@@ -556,13 +711,13 @@ class PromptService:
 ✅ 剧情连贯：与前文自然衔接，保持连贯性
 ✅ 角色发展：遵循角色成长轨迹，充分利用角色信息
 ✅ 情节阶段：遵循{plot_stage_instruction}的要求
-✅ 风格一致：保持与已有章节相同风格和详细程度
-✅ 大纲详细：充分解析最近10章大纲的structure字段信息
+✅ 风格一致：保持与已有卷纲相同风格和详细程度
+✅ 大纲详细：充分解析最近大纲的structure字段信息
 
 【必须遵守】
-✅ 数量精确：数组包含{chapter_count}个章节
-✅ 编号正确：从第{start_chapter}章开始
-✅ 描述详细：每个summary 500-1000字
+✅ 数量精确：数组包含{chapter_count}个卷纲
+✅ 编号正确：从第{start_chapter}卷开始
+✅ 描述详细：每个summary 800-1500字
 ✅ 承上启下：自然衔接前文
 
 【禁止事项】
@@ -572,6 +727,10 @@ class PromptService:
 ❌ 忽略已有角色发展
 ❌ 忽略最近大纲中的情节线索
 </constraints>"""
+
+
+
+
     
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
@@ -606,6 +765,16 @@ class PromptService:
 【本章职业】
 {chapter_careers}
 </careers>
+
+<organizations priority="P2">
+【本章组织 - 请严格遵循组织设定】
+{organizations_info}
+
+⚠️ 组织互动须知：
+- 组织相关情节须体现组织的性质、目的和层级关系
+- 角色在组织中的言行须符合其身份和职位
+- 组织之间的冲突须体现利益矛盾和权力斗争
+</organizations>
 
 <foreshadow_reminders priority="P2">
 【🎯 伏笔提醒】
@@ -670,6 +839,16 @@ class PromptService:
 【本章职业】
 {chapter_careers}
 </careers>
+
+<organizations priority="P2">
+【本章组织 - 请严格遵循组织设定】
+{organizations_info}
+
+⚠️ 组织互动须知：
+- 组织相关情节须体现组织的性质、目的和层级关系
+- 角色在组织中的言行须符合其身份和职位
+- 组织之间的冲突须体现利益矛盾和权力斗争
+</organizations>
 
 <foreshadow_reminders priority="P2">
 【🎯 伏笔提醒】
@@ -746,6 +925,16 @@ class PromptService:
 【本章职业】
 {chapter_careers}
 </careers>
+
+<organizations priority="P2">
+【本章组织 - 请严格遵循组织设定】
+{organizations_info}
+
+⚠️ 组织互动须知：
+- 组织相关情节须体现组织的性质、目的和层级关系
+- 角色在组织中的言行须符合其身份和职位
+- 组织之间的冲突须体现利益矛盾和权力斗争
+</organizations>
 
 <foreshadow_reminders priority="P2">
 【🎯 伏笔提醒】
@@ -1564,6 +1753,9 @@ class PromptService:
 
 【已生成的前序章节】
 {previous_context}
+
+【后续章节（新章纲需要与之衔接）】
+{next_chapters_context}
 </context>
 
 <output priority="P0">

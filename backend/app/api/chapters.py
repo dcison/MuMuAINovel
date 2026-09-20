@@ -5,6 +5,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
+import re
 from typing import Awaitable, Callable, List, Optional
 from datetime import datetime, timedelta
 from asyncio import Queue, Lock
@@ -43,6 +44,7 @@ from app.schemas.chapter import (
     BatchGenerateResponse,
     BatchGenerateStatusResponse,
     ExpansionPlanUpdate,
+    RegenerateFromPositionRequest,
     PartialRegenerateRequest
 )
 from app.schemas.regeneration import (
@@ -56,6 +58,7 @@ from app.services.plot_analyzer import PlotAnalyzer
 from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
+from app.services.plot_expansion_service import PlotExpansionService
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -497,7 +500,8 @@ async def update_chapter(
 async def delete_chapter(
     chapter_id: str,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
 ):
     """删除章节"""
     result = await db.execute(
@@ -548,9 +552,26 @@ async def delete_chapter(
         logger.warning(f"⚠️ 清理伏笔数据失败: {str(e)}")
         # 不阻断删除流程，继续执行
     
+    # 记录所属大纲 ID（删除前）
+    outline_id = chapter.outline_id
+    
     # 删除章节（关系数据库中的记忆会被级联删除）
     await db.delete(chapter)
-    await db.commit()
+    # 注意：不在此处 commit，由 _renumber_subsequent_chapters 统一提交
+    # 保证删除和重排在同一个事务中，避免数据不一致
+
+    # 紧凑化重排：从该大纲开始重新计算后续所有章节编号
+    if outline_id:
+        from app.services.plot_expansion_service import PlotExpansionService
+        expansion_service = PlotExpansionService(user_ai_service)
+        await expansion_service._renumber_subsequent_chapters(
+            project_id=chapter.project_id,
+            current_outline_id=outline_id,
+            db=db
+        )
+    else:
+        # 无所属大纲时，直接提交删除
+        await db.commit()
     
     return {"message": "章节删除成功"}
 
@@ -1723,6 +1744,7 @@ async def generate_chapter_content_stream(
                             recent_chapters_context=chapter_context.recent_chapters_context or '暂无最近章节摘要',
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                            organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                             relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
                         )
@@ -1741,6 +1763,7 @@ async def generate_chapter_content_stream(
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                            organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                             relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
                         )
@@ -1769,6 +1792,7 @@ async def generate_chapter_content_stream(
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                            organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                             previous_chapter_summary=previous_summary,
                             recent_chapters_context=chapter_context.recent_chapters_context or '',
@@ -1790,6 +1814,7 @@ async def generate_chapter_content_stream(
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                            organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                             relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
                         )
@@ -2288,6 +2313,7 @@ async def _run_chapter_generation_bg(
                 recent_chapters_context=chapter_context.recent_chapters_context or '暂无最近章节摘要',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -2304,6 +2330,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -2323,6 +2350,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
@@ -2341,6 +2369,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -2826,6 +2855,7 @@ async def _run_chapter_generation_bg(
                 recent_chapters_context=chapter_context.recent_chapters_context or '暂无最近章节摘要',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -2842,6 +2872,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -2861,6 +2892,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
@@ -2879,6 +2911,7 @@ async def _run_chapter_generation_bg(
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -4371,6 +4404,7 @@ async def generate_single_chapter_for_batch(
                 previous_chapter_content=chapter_context.continuation_point,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆',
                 previous_chapter_summary=chapter_context.previous_chapter_summary or '',
@@ -4390,6 +4424,7 @@ async def generate_single_chapter_for_batch(
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -4418,6 +4453,7 @@ async def generate_single_chapter_for_batch(
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=final_prev_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
@@ -4437,6 +4473,7 @@ async def generate_single_chapter_for_batch(
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
+                organizations_info=chapter_context.chapter_organizations or '暂无组织信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
@@ -4935,6 +4972,241 @@ async def regenerate_chapter_stream(
                     logger.error(f"关闭数据库会话失败: {str(close_error)}")
     
     return create_sse_response(event_generator())
+
+
+@router.post("/{chapter_id}/regenerate-from-position", summary="从当前章节开始重新生成后续章节（后台任务）")
+async def regenerate_chapters_from_position(
+    chapter_id: str,
+    regenerate_request: RegenerateFromPositionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
+):
+    """
+    从当前章节起重新生成 N 章（后台任务）。
+    任务创建后立即返回task_id，前端通过 GET /api/tasks/{task_id} 轮询进度。
+    完成后前端应刷新章节列表。
+    """
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+    from app.database import get_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 验证章节存在
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 创建后台任务
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=chapter.project_id,
+        task_type="chapter_regenerate_from_position",
+        task_input={
+            "chapter_id": chapter_id,
+            "target_chapter_count": regenerate_request.target_chapter_count,
+            "expansion_strategy": regenerate_request.expansion_strategy,
+            "provider": regenerate_request.provider,
+            "model": regenerate_request.model,
+        },
+        db=db
+    )
+
+    # 后台执行的函数
+    async def _run_regenerate(task_id: str, bg_user_id: str):
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "章纲")
+            try:
+                await tracker.start()
+                await _run_regenerate_from_position_bg(
+                    task_input={
+                        "chapter_id": chapter_id,
+                        "target_chapter_count": regenerate_request.target_chapter_count,
+                        "expansion_strategy": regenerate_request.expansion_strategy,
+                        "provider": regenerate_request.provider,
+                        "model": regenerate_request.model,
+                    },
+                    db=bg_db,
+                    tracker=tracker,
+                    user_id=bg_user_id,
+                    task_id=task_id,
+                )
+            except Exception as e:
+                logger.error(f"❌ 后台重新生成章纲失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(task.id, user_id, _run_regenerate)
+
+    return {
+        "task_id": task.id,
+        "task_type": "chapter_regenerate_from_position",
+        "status": "pending",
+        "message": "重新生成任务已创建，请通过后台任务面板查看进度"
+    }
+
+
+async def _run_regenerate_from_position_bg(
+    task_input: dict,
+    db: AsyncSession,
+    tracker,
+    user_id: str,
+    task_id: str,
+):
+    """后台执行从指定位置重新生成章纲"""
+    from app.api.settings import get_user_ai_service_from_db
+
+    chapter_id = task_input["chapter_id"]
+    target_chapter_count = task_input["target_chapter_count"]
+    expansion_strategy = task_input["expansion_strategy"]
+    provider = task_input.get("provider")
+    model = task_input.get("model")
+
+    await tracker.loading("加载项目信息...", 0.1)
+
+    # 获取 AI 服务
+    bg_ai_service = await get_user_ai_service_from_db(user_id, db)
+
+    # 获取章节
+    chapter_result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        await tracker.error("章节不存在")
+        return
+
+    project_id = chapter.project_id
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        await tracker.error("项目不存在")
+        return
+
+    # 获取大纲
+    outline = None
+    if chapter.outline_id:
+        outline_result = await db.execute(select(Outline).where(Outline.id == chapter.outline_id))
+        outline = outline_result.scalar_one_or_none()
+    else:
+        outline_result = await db.execute(
+            select(Outline)
+            .where(Outline.project_id == project_id, Outline.order_index == chapter.chapter_number)
+            .order_by(Outline.order_index)
+            .limit(1)
+        )
+        outline = outline_result.scalar_one_or_none()
+
+    if not outline:
+        await tracker.error("当前章节未关联大纲，无法从当前位置重新生成")
+        return
+
+    await tracker.preparing("准备AI重新生成章纲...")
+
+    expansion_service = PlotExpansionService(bg_ai_service)
+    chapter_plans = await expansion_service.regenerate_chapters_from_position(
+        outline=outline,
+        project=project,
+        db=db,
+        target_chapter_count=target_chapter_count,
+        expansion_strategy=expansion_strategy,
+        provider=provider,
+        model=model,
+        start_chapter_number=chapter.chapter_number,
+        start_sub_index=chapter.sub_index or 1,
+    )
+
+    if not chapter_plans:
+        await tracker.error("AI未返回可生成的章节规划")
+        return
+
+    await tracker.saving("保存生成结果...", 0.7)
+
+    first_plan = chapter_plans[0]
+    chapter.title = first_plan.get('title', chapter.title)
+    chapter.summary = first_plan.get('plot_summary', chapter.summary or '')
+
+    plan_payload = {
+        "key_events": first_plan.get('key_events') or [],
+        "character_focus": first_plan.get('character_focus') or [],
+        "emotional_tone": first_plan.get('emotional_tone', ''),
+        "narrative_goal": first_plan.get('narrative_goal', ''),
+        "conflict_type": first_plan.get('conflict_type', ''),
+        "estimated_words": first_plan.get('estimated_words', 3000),
+        "scenes": first_plan.get('scenes') if first_plan.get('scenes') else None,
+    }
+    chapter.expansion_plan = json.dumps(plan_payload, ensure_ascii=False)
+    chapter.status = 'draft'
+
+    new_chapters = []
+    for offset, plan in enumerate(chapter_plans[1:], start=1):
+        new_chapter = Chapter(
+            project_id=project_id,
+            outline_id=chapter.outline_id,
+            chapter_number=chapter.chapter_number + offset,
+            sub_index=(chapter.sub_index or 1) + offset,
+            title=plan.get('title', f'第{chapter.chapter_number + offset}章'),
+            summary=plan.get('plot_summary', ''),
+            expansion_plan=json.dumps({
+                "key_events": plan.get('key_events') or [],
+                "character_focus": plan.get('character_focus') or [],
+                "emotional_tone": plan.get('emotional_tone', ''),
+                "narrative_goal": plan.get('narrative_goal', ''),
+                "conflict_type": plan.get('conflict_type', ''),
+                "estimated_words": plan.get('estimated_words', 3000),
+                "scenes": plan.get('scenes') if plan.get('scenes') else None,
+            }, ensure_ascii=False),
+            status='draft',
+            word_count=0,
+            content='',
+        )
+        db.add(new_chapter)
+        new_chapters.append(new_chapter)
+
+    await db.commit()
+
+    for ch in new_chapters:
+        await db.refresh(ch)
+    await db.refresh(chapter)
+
+    # 紧凑化重排：从当前大纲开始重新计算后续所有章节编号
+    if outline and outline.id:
+        await expansion_service._renumber_subsequent_chapters(
+            project_id=project_id,
+            current_outline_id=outline.id,
+            db=db
+        )
+        # 刷新 chapter 数据（编号可能已变化）
+        await db.refresh(chapter)
+        for ch in new_chapters:
+            await db.refresh(ch)
+
+    # 更新任务结果
+    from app.models.background_task import BackgroundTask
+    task_result = await db.execute(select(BackgroundTask).where(BackgroundTask.id == task_id))
+    bg_task = task_result.scalar_one_or_none()
+    if bg_task:
+        bg_task.task_result = {
+            "start_chapter_number": chapter.chapter_number,
+            "generated_chapter_count": len(chapter_plans),
+            "generated_chapters": [
+                {
+                    "chapter_number": chapter.chapter_number + idx,
+                    "title": plan.get('title', f'第{chapter.chapter_number + idx}章'),
+                    "summary": plan.get('plot_summary', ''),
+                }
+                for idx, plan in enumerate(chapter_plans)
+            ],
+        }
+        await db.commit()
+
+    await tracker.complete(f"已从第{chapter.chapter_number}章起重新生成 {len(chapter_plans)} 章")
+    logger.info(f"✅ 后台重新生成章纲完成: 第{chapter.chapter_number}章起 {len(chapter_plans)} 章")
 
 
 @router.get("/{chapter_id}/regeneration/tasks", summary="获取章节的重新生成任务列表")

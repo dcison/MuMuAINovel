@@ -186,6 +186,7 @@ class ExpansionPlanUpdate(BaseModel):
     summary: Optional[str] = Field(None, description="章节情节概要")
     key_events: Optional[List[str]] = Field(None, description="关键事件列表")
     character_focus: Optional[List[str]] = Field(None, description="涉及角色列表")
+    organization_focus: Optional[List[str]] = Field(None, description="涉及组织列表")
     emotional_tone: Optional[str] = Field(None, description="情感基调")
     narrative_goal: Optional[str] = Field(None, description="叙事目标")
     conflict_type: Optional[str] = Field(None, description="冲突类型")
@@ -216,6 +217,23 @@ class ExpansionPlanResponse(BaseModel):
     id: str = Field(..., description="章节ID")
     expansion_plan: Optional[Dict[str, Any]] = Field(None, description="规划数据")
     message: str = Field(..., description="响应消息")
+
+
+class RegenerateFromPositionRequest(BaseModel):
+    """从当前章节位置重新生成后续章节的请求参数"""
+    target_chapter_count: int = Field(..., description="从当前章节起重新生成多少章", ge=1, le=10)
+    expansion_strategy: str = Field("balanced", description="展开策略：balanced/climax/detail")
+    provider: Optional[str] = Field(None, description="可选AI提供商")
+    model: Optional[str] = Field(None, description="可选AI模型")
+
+
+class RegenerateFromPositionResponse(BaseModel):
+    """从当前章节位置重新生成后续章节的响应"""
+    start_chapter_number: int
+    generated_chapter_count: int
+    shifted_chapter_count: int
+    updated_chapter_ids: List[str]
+    generated_chapters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class PartialRegenerateRequest(BaseModel):

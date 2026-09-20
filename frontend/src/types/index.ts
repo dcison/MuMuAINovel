@@ -346,6 +346,7 @@ export interface CharacterUpdate {
 export interface ExpansionPlanData {
   key_events: string[];
   character_focus: string[];
+  organization_focus?: string[];
   emotional_tone: string;
   narrative_goal: string;
   conflict_type: string;
@@ -421,11 +422,11 @@ export interface GenerateOutlineRequest {
   project_id: string;
   genre?: string;
   theme: string;
-  chapter_count: number;
+  volume_count: number;
   narrative_perspective: string;
   world_context?: Record<string, unknown>;
   characters_context?: Character[];
-  target_words?: number;
+  target_words: number;
   requirements?: string;
   provider?: string;
   model?: string;
