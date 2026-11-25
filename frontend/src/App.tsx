@@ -22,6 +22,7 @@ import UserManagement from './pages/UserManagement';
 import PromptTemplates from './pages/PromptTemplates';
 import SkillChat from './pages/SkillChat';
 import SkillManage from './pages/SkillManage';
+import KnowledgeBase from './pages/KnowledgeBase';
 // import Polish from './pages/Polish';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
@@ -54,6 +55,7 @@ function App() {
           <Route path="/project/:projectId" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>}>
             <Route index element={<Navigate to="world-setting" replace />} />
             <Route path="world-setting" element={<WorldSetting />} />
+            <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="careers" element={<Careers />} />
             <Route path="outline" element={<Outline />} />
             <Route path="characters" element={<Characters />} />

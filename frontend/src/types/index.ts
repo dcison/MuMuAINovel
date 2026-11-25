@@ -81,6 +81,7 @@ export interface Settings {
   temperature: number;
   max_tokens: number;
   system_prompt?: string;
+  disable_thinking?: boolean;
   cover_api_provider?: string;
   cover_api_key?: string;
   cover_api_base_url?: string;
@@ -99,6 +100,7 @@ export interface SettingsUpdate {
   temperature?: number;
   max_tokens?: number;
   system_prompt?: string;
+  disable_thinking?: boolean;
   cover_api_provider?: string;
   cover_api_key?: string;
   cover_api_base_url?: string;
@@ -281,6 +283,118 @@ export interface OutlineUpdate {
   content?: string;
   structure?: string;  // 支持修改structure字段
   // order_index 只能通过 reorder 接口批量调整
+}
+
+export interface AgentConversation {
+  id: string;
+  user_id: string;
+  project_id: string;
+  title: string;
+  summary?: string;
+  status: string;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentMessage {
+  id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string;
+  model?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  created_at: string;
+}
+
+export interface AgentToolCall {
+  id: string;
+  conversation_id: string;
+  message_id?: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  risk_level: number;
+  requires_confirmation: boolean;
+  status: string;
+  preview?: {
+    entity_type: string;
+    entity_id: string;
+    label: string;
+    changes: Record<string, { before: unknown; after: unknown }>;
+    resources: string[];
+  };
+  result?: Record<string, unknown>;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface AgentExecutionStep {
+  id: string;
+  conversation_id: string;
+  user_message_id?: string;
+  assistant_message_id?: string;
+  tool_call_id?: string;
+  sequence: number;
+  step_type: 'thought' | 'tool' | 'skill' | string;
+  category: 'analysis' | 'project' | 'mcp' | 'skill' | string;
+  title: string;
+  content?: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'rejected' | 'waiting_confirmation' | string;
+  detail?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentConversationDetail extends AgentConversation {
+  messages: AgentMessage[];
+  tool_calls: AgentToolCall[];
+  execution_steps: AgentExecutionStep[];
+}
+
+export interface AgentToolDecision {
+  success: boolean;
+  message: string;
+  tool_call: AgentToolCall;
+  resources: string[];
+}
+
+export type OutlineImportMode = 'append' | 'merge';
+
+export interface OutlineImportPreview {
+  valid: boolean;
+  version: string;
+  source_type: 'outlines' | 'project' | 'unknown';
+  source_project?: {
+    title: string;
+    outline_mode: 'one-to-one' | 'one-to-many';
+  } | null;
+  target_outline_mode?: 'one-to-one' | 'one-to-many' | null;
+  mode: OutlineImportMode;
+  statistics: {
+    total: number;
+    will_create: number;
+    will_update: number;
+    will_create_chapters: number;
+  };
+  errors: string[];
+  warnings: string[];
+}
+
+export interface OutlineImportResult {
+  success: boolean;
+  message: string;
+  mode: OutlineImportMode;
+  imported: number;
+  updated: number;
+  created_chapters: number;
+  details: Array<{
+    source_order_index: number;
+    target_order_index: number;
+    title: string;
+    action: 'created' | 'updated';
+  }>;
+  warnings: string[];
 }
 
 // 角色类型定义
@@ -1267,3 +1381,56 @@ export const PROMPT_CATEGORIES: Record<string, string> = {
   game: '游戏/电竞',
   other: '其他',
 };
+
+
+export interface KnowledgeBaseSettings {
+  retrieval_enabled: boolean;
+  top_k: number;
+  min_score: number;
+  max_context_chars: number;
+}
+
+export interface KnowledgeBase {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string;
+  scope: string;
+  status: string;
+  settings?: KnowledgeBaseSettings;
+  document_count: number;
+  chunk_count: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  knowledge_base_id: string;
+  title: string;
+  original_filename: string;
+  source_type: string;
+  mime_type?: string;
+  file_size: number;
+  status: string;
+  error_message?: string;
+  extracted_char_count: number;
+  chunk_count: number;
+  indexed_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface KnowledgeSearchHit {
+  chunk_id: string;
+  content: string;
+  score: number;
+  distance: number;
+  metadata: {
+    title?: string;
+    original_filename?: string;
+    section_title?: string;
+    heading_path?: string | string[];
+    [key: string]: unknown;
+  };
+}

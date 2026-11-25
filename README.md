@@ -21,6 +21,23 @@
 
 ---
 
+## 🤝 赞助商
+
+<table>
+<tr>
+<td width="200" align="center" valign="middle"><a href="https://www.aiyoyoo.com/register?aff=4AXY9WGE2C5Q"><img src="images/CrazyToken.png" alt="CrazyToken" width="180"></a></td>
+<td valign="middle">感谢 <strong>CrazyToken</strong> 赞助支持本项目！CrazyToken 提供 Claude、GPT、Gemini、Kimi、GLM、DeepSeek、Qwen、Grok 等全系主流模型，覆盖大纲构思、正文续写、爽点打磨、润色改稿，针对不同环节选择最合适的模型。全模型低至官方价格的 5%（<code>0.05×</code>），Token 级账单透明可查；官方原生通道，不掺水、不混模、不压缩长上下文，保持模型原生输出体验；稳定高速、高并发不限流，支持多书创作和章节批量生成。新用户通过 <a href="https://www.aiyoyoo.com/register?aff=4AXY9WGE2C5Q">专属链接</a> 注册即送 <code>$20</code> 体验额度，充值额外加赠，并提供独家 1 对 1 远程配置服务，全程真人协助，开箱即用。</td>
+</tr>
+<tr>
+<td width="200" align="center" valign="middle"><strong>欢迎赞助</strong></td>
+<td valign="middle">欢迎赞助本项目，支持 MuMuAINovel 持续开发！<br>赞助或合作联系：<a href="https://qm.qq.com/q/YZScNlOa66">点击此链接</a>。</td>
+</tr>
+</table>
+
+<br>
+
+---
+
 ## ✨ 特性
 
 - 🤖 **多 AI 模型** - 支持 OpenAI、Gemini、Claude 等主流模型
@@ -239,7 +256,7 @@ services:
     environment:
       # 应用配置
       - APP_NAME=${APP_NAME:-MuMuAINovel}
-      - APP_VERSION=${APP_VERSION:-1.0.0}
+      - APP_VERSION=${APP_VERSION:-1.5.8}
       - APP_HOST=${APP_HOST:-0.0.0.0}
       - APP_PORT=8000
       - DEBUG=${DEBUG:-false}
@@ -270,6 +287,8 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
       - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
       - DEFAULT_MAX_TOKENS=${DEFAULT_MAX_TOKENS:-32000}
+      - ALLOW_PRIVATE_AI_ENDPOINTS=${ALLOW_PRIVATE_AI_ENDPOINTS:-false}
+      - ALLOWED_AI_HOSTS=${ALLOWED_AI_HOSTS:-}
       # LinuxDO OAuth 配置
       - LINUXDO_CLIENT_ID=${LINUXDO_CLIENT_ID:-11111}
       - LINUXDO_CLIENT_SECRET=${LINUXDO_CLIENT_SECRET:-11111}
@@ -405,6 +424,10 @@ DATABASE_MAX_OVERFLOW=20
 # 会话 Cookie Secure 标记
 # 默认 true，适合 HTTPS 部署；如果使用 HTTP 访问并且浏览器不保存登录 Cookie，可设为 false
 SESSION_COOKIE_SECURE=true
+
+# 本地 / Docker 内网 LLM（默认关闭，保持 SSRF 防护）
+# ALLOW_PRIVATE_AI_ENDPOINTS=true
+# ALLOWED_AI_HOSTS=host.docker.internal,127.0.0.1
 ```
 
 > **🔐 Cookie Secure 说明**
@@ -419,6 +442,13 @@ SESSION_COOKIE_SECURE=true
 > - `LINUXDO_PROXY_URL` 只会用于 LinuxDO OAuth 的 token 交换和用户信息请求，不影响 AI 服务、SMTP、数据库等其他网络调用。
 > - 常见示例：`LINUXDO_PROXY_URL=http://127.0.0.1:7890`；Docker 容器内访问宿主机代理时通常需要使用宿主机在 Docker 网络中的地址，而不是容器内的 `127.0.0.1`。
 > - 当前示例按 HTTP 代理配置；如果需要 SOCKS 代理，请先确保运行环境安装了 httpx 的 SOCKS 支持依赖。
+>
+> **🖥️ 本地 / Docker 内网 LLM 说明**
+>
+> - 默认会拒绝 `localhost`、`127.0.0.1`、私网 IP 以及解析到内网的主机名（例如 `host.docker.internal`），用于降低 SSRF 风险。
+> - 如果 AI 服务跑在本机 Ollama / llama.cpp，或 Docker 容器需要访问宿主机上的模型，请在 `.env` 中设置 `ALLOW_PRIVATE_AI_ENDPOINTS=true`，或把允许的主机名写入 `ALLOWED_AI_HOSTS`。
+> - 即使开启本地放行，链路本地地址（如云厂商元数据 `169.254.169.254`）仍然会被拒绝。
+> - MCP 插件 URL 不受该开关影响，继续走严格的公网校验。
 
 ### 中转 API 配置
 

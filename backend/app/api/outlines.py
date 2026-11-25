@@ -29,6 +29,7 @@ from app.schemas.outline import (
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
+from app.services.knowledge_service import knowledge_service
 from app.services.memory_service import memory_service
 from app.services.plot_expansion_service import PlotExpansionService
 from app.services.foreshadow_service import foreshadow_service
@@ -98,7 +99,7 @@ async def get_outlines(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    """获取指定项目的所有大纲（优化版：后端完全解析structure，构建标准JSON返回）"""
+    """获取指定项目的所有大纲。title/content 字段是展示数据的唯一来源。"""
     # 验证用户权限
     user_id = getattr(request.state, 'user_id', None)
     await verify_project_access(project_id, user_id, db)
@@ -132,29 +133,9 @@ async def get_outlines(
             if outline_id
         }
 
-    # 🔧 优化：后端完全解析structure，提取所有字段填充到outline对象
     for outline in outlines:
         # 动态附加是否已有章节展开状态，供前端直接使用
         setattr(outline, "has_chapters", outline_has_chapters_map.get(outline.id, False))
-
-        if outline.structure:
-            try:
-                structure_data = json.loads(outline.structure)
-
-                # 从structure中提取所有字段填充到outline对象
-                outline.title = structure_data.get("title", f"第{outline.order_index}章")
-                outline.content = structure_data.get("summary") or structure_data.get("content", "")
-
-                # structure字段保持不变，供前端使用其他字段（如characters、scenes等）
-
-            except json.JSONDecodeError:
-                logger.warning(f"解析大纲 {outline.id} 的structure失败")
-                outline.title = f"第{outline.order_index}章"
-                outline.content = "解析失败"
-        else:
-            # 没有structure的异常情况
-            outline.title = f"第{outline.order_index}章"
-            outline.content = "暂无内容"
 
     return OutlineListResponse(total=total, items=outlines)
 
@@ -213,6 +194,8 @@ async def update_outline(
     
     # 更新字段
     update_data = outline_update.model_dump(exclude_unset=True)
+    if "content" in update_data and update_data["content"] is None:
+        update_data["content"] = ""
     
     # 🔧 特殊处理：如果直接传递了structure字段，优先使用它
     if 'structure' in update_data:
@@ -1039,7 +1022,7 @@ async def _save_outlines(
         
         # 🔧 修复：从structure中提取title和summary/content保存到数据库
         chapter_title = chapter_data.get("title", f"第{order_idx}章")
-        chapter_content = chapter_data.get("summary") or chapter_data.get("content", "")
+        chapter_content = chapter_data.get("summary") or chapter_data.get("content") or ""
         
         outline = Outline(
             project_id=project_id,
@@ -1145,17 +1128,34 @@ async def new_outline_generator(
             title=project.title,
             theme=data.get("theme") or project.theme or "未设定",
             genre=data.get("genre") or project.genre or "通用",
-            volume_count=volume_count,
-            target_words=target_words,
-            narrative_perspective=data.get("narrative_perspective") or "第三人称",
-            time_period=project.world_time_period or "未设定",
-            location=project.world_location or "未设定",
-            atmosphere=project.world_atmosphere or "未设定",
-            rules=project.world_rules or "未设定",
-            characters_info=characters_info or "暂无角色信息",
-            requirements=data.get("requirements") or "",
-            mcp_references=""
+             volume_count=volume_count,
+             target_words=target_words,
+             narrative_perspective=data.get("narrative_perspective") or "第三人称",
+             time_period=project.world_time_period or "未设定",
+             location=project.world_location or "未设定",
+             atmosphere=project.world_atmosphere or "未设定",
+             rules=project.world_rules or "未设定",
+             characters_info=characters_info or "暂无角色信息",
+             requirements=data.get("requirements") or "",
+             mcp_references=""
+         )
+        knowledge_context = await knowledge_service.get_generation_context(
+            user_id_for_mcp,
+            project_id,
+            f"{project.title}\n{data.get('theme') or project.theme or ''}\n{data.get('genre') or project.genre or ''}\n{data.get('requirements') or ''}\n{project.world_rules or ''}",
+            db,
+            purpose="outline",
         )
+        if knowledge_context:
+            prompt += "\n\n" + knowledge_context
+
+        logger.debug(f"大纲生成提示词完成: prompt_length={len(prompt)}")
+        # 添加调试日志
+        model_param = data.get("model")
+        provider_param = data.get("provider")
+        logger.info(f"=== 大纲生成AI调用参数 ===")
+        logger.info(f"  provider参数: {provider_param}")
+        logger.info(f"  model参数: {model_param}")
         
         # 生成概要
         accumulated_text = ""
@@ -1705,6 +1705,16 @@ async def _run_new_outline_bg(
         requirements=data.get("requirements") or "",
         mcp_references=""
     )
+    knowledge_context = await knowledge_service.get_generation_context(
+        user_id_for_mcp,
+        project_id,
+        f"{project.title}\n{project.theme or ''}\n{project.genre or ''}\n{data.get('requirements') or ''}\n{project.world_rules or ''}",
+        db,
+        purpose="outline",
+    )
+    if knowledge_context:
+        prompt += "\n\n" + knowledge_context
+
 
     accumulated_text = ""
     async for chunk in user_ai_service.generate_text_stream(

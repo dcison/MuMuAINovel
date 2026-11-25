@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
+import mimetypes
 import sys
 
 from app.config import settings as config_settings
@@ -25,6 +26,30 @@ setup_logging(
     message_max_chars=config_settings.log_message_max_chars,
 )
 logger = get_logger(__name__)
+
+
+# 不依赖 Windows 注册表，确保前端模块脚本始终返回正确的 MIME 类型。
+STATIC_MIME_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".html": "text/html",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".wasm": "application/wasm",
+}
+
+for _suffix, _media_type in STATIC_MIME_TYPES.items():
+    mimetypes.add_type(_media_type, _suffix, strict=True)
+
+
+def get_static_media_type(path: Path) -> str:
+    """返回稳定的静态文件 MIME 类型，避免未知类型退回 text/plain。"""
+    return (
+        STATIC_MIME_TYPES.get(path.suffix.lower())
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
 
 
 @asynccontextmanager
@@ -179,12 +204,12 @@ async def db_session_stats(request: Request):
 
 
 from app.api import (
-    projects, outlines, characters, chapters,
+    projects, outlines, outline_transfer, characters, chapters,
     wizard_stream, relationships, organizations,
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
-    project_covers, tasks, skills, announcements
+    project_covers, project_agent, tasks, skills, announcements, knowledge
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -194,9 +219,11 @@ app.include_router(admin.router, prefix="/api")
 
 app.include_router(projects.router, prefix="/api")
 app.include_router(project_covers.router, prefix="/api")
+app.include_router(project_agent.router, prefix="/api")
 app.include_router(wizard_stream.router, prefix="/api")
 app.include_router(inspiration.router, prefix="/api")
 app.include_router(outlines.router, prefix="/api")
+app.include_router(outline_transfer.router, prefix="/api")
 app.include_router(characters.router, prefix="/api")
 app.include_router(careers.router, prefix="/api")  # 职业管理API
 app.include_router(chapters.router, prefix="/api")
@@ -212,7 +239,8 @@ app.include_router(skills.router)  # Skill API（已包含/api前缀）
 app.include_router(prompt_workshop.router, prefix="/api")  # 提示词工坊API
 app.include_router(book_import.router, prefix="/api")  # 拆书导入API
 app.include_router(tasks.router, prefix="/api")  # 后台任务API
-app.include_router(announcements.router, prefix="/api")  # 公告API
+app.include_router(announcements.router, prefix="/api")
+app.include_router(knowledge.router)  # local knowledge base API
 
 if getattr(sys, "frozen", False):
     static_dir = Path(sys._MEIPASS) / "backend" / "static"
@@ -247,7 +275,10 @@ if static_dir.exists():
             )
 
         if resolved_file.is_file():
-            return FileResponse(resolved_file)
+            return FileResponse(
+                resolved_file,
+                media_type=get_static_media_type(resolved_file),
+            )
         
         index_file = static_dir / "index.html"
         if index_file.exists():

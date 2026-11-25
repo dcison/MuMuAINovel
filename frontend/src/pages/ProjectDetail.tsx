@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Menu, Spin, Button, Drawer, theme } from 'antd';
+import { Layout, Menu, Spin, Button, Drawer, Space, theme } from 'antd';
 import {
   ArrowLeftOutlined,
   FileTextOutlined,
@@ -20,6 +20,7 @@ import {
   MoonOutlined,
   ThunderboltOutlined,
   SettingOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -28,6 +29,8 @@ import ThemeSwitch from '../components/ThemeSwitch';
 import { useThemeMode } from '../theme/useThemeMode';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import FloatingTaskPanel from '../components/FloatingTaskPanel';
+import ProjectAgentPanel from '../components/project-agent/ProjectAgentPanel';
+import { eventBus, EventNames } from '../store/eventBus';
 
 const { Header, Sider, Content } = Layout;
 
@@ -41,6 +44,13 @@ export default function ProjectDetail() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [mobile, setMobile] = useState(isMobile());
+  const [agentDrawerVisible, setAgentDrawerVisible] = useState(false);
+  const [agentLayout, setAgentLayout] = useState({ expanded: true, width: 410 });
+  const handleAgentLayoutChange = useCallback((expanded: boolean, width: number) => {
+    setAgentLayout(current => (
+      current.expanded === expanded && current.width === width ? current : { expanded, width }
+    ));
+  }, []);
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const { mode, resolvedMode, setMode } = useThemeMode();
@@ -80,6 +90,33 @@ export default function ProjectDetail() {
   const { refreshCharacters } = useCharacterSync();
   const { refreshOutlines } = useOutlineSync();
   const { refreshChapters } = useChapterSync();
+
+  useEffect(() => {
+    const handleAgentDataChanged = (payload?: unknown) => {
+      if (!projectId || !payload || typeof payload !== 'object') return;
+      const resources = (payload as { resources?: string[] }).resources || [];
+      const refreshes: Promise<unknown>[] = [];
+      if (resources.includes('projects')) {
+        refreshes.push(projectApi.getProject(projectId).then(setCurrentProject));
+      }
+      if (resources.includes('outlines')) refreshes.push(refreshOutlines(projectId));
+      if (resources.includes('characters')) refreshes.push(refreshCharacters(projectId));
+      if (resources.includes('chapters')) refreshes.push(refreshChapters(projectId));
+      void Promise.all(refreshes);
+    };
+    eventBus.on(EventNames.AGENT_DATA_CHANGED, handleAgentDataChanged);
+    const handleTaskSettled = (payload?: unknown) => {
+      if (!payload || typeof payload !== 'object') return;
+      const data = payload as { projectId?: string };
+      if (data.projectId && data.projectId !== projectId) return;
+      handleAgentDataChanged(payload);
+    };
+    eventBus.on(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
+    return () => {
+      eventBus.off(EventNames.AGENT_DATA_CHANGED, handleAgentDataChanged);
+      eventBus.off(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
+    };
+  }, [projectId, refreshChapters, refreshCharacters, refreshOutlines, setCurrentProject]);
 
   useEffect(() => {
     const loadProjectData = async (id: string) => {
@@ -160,6 +197,11 @@ export default function ProjectDetail() {
           icon: <BulbOutlined />,
           label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link>,
         },
+        {
+          key: 'knowledge-base',
+          icon: <DatabaseOutlined />,
+          label: <Link to={`/project/${projectId}/knowledge-base`}>知识库管理</Link>,
+        },
       ],
     },
     {
@@ -238,6 +280,11 @@ export default function ProjectDetail() {
       label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link>,
     },
     {
+      key: 'knowledge-base',
+      icon: <DatabaseOutlined />,
+      label: <Link to={`/project/${projectId}/knowledge-base`}>知识库管理</Link>,
+    },
+    {
       key: 'writing-styles',
       icon: <EditOutlined />,
       label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link>,
@@ -263,6 +310,7 @@ export default function ProjectDetail() {
   const selectedKey = useMemo(() => {
     const path = location.pathname;
     if (path.includes('/world-setting')) return 'world-setting';
+    if (path.includes('/knowledge-base')) return 'knowledge-base';
     if (path.includes('/careers')) return 'careers';
     if (path.includes('/relationships')) return 'relationships';
     if (path.includes('/organizations')) return 'organizations';
@@ -363,20 +411,27 @@ export default function ProjectDetail() {
         </h2>
 
         {mobile && (
-          <Button
-            type="text"
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/')}
-            style={{
-              fontSize: '14px',
-              color: token.colorWhite,
-              height: '36px',
-              padding: '0 8px',
-              zIndex: 1
-            }}
-          >
-            主页
-          </Button>
+          <Space size={2} style={{ zIndex: 1 }}>
+            <Button
+              type="text"
+              icon={<img src="/logo.svg" alt="木木创作助手" style={{ width: 20, height: 20, display: 'block' }} />}
+              onClick={() => setAgentDrawerVisible(true)}
+              style={{ color: token.colorWhite, width: 36, height: 36 }}
+            />
+            <Button
+              type="text"
+              icon={<ArrowLeftOutlined />}
+              onClick={() => navigate('/')}
+              style={{
+                fontSize: '14px',
+                color: token.colorWhite,
+                height: '36px',
+                padding: '0 6px',
+              }}
+            >
+              主页
+            </Button>
+          </Space>
         )}
 
         {!mobile && (
@@ -653,22 +708,46 @@ export default function ProjectDetail() {
           >
             <div style={{
               background: token.colorBgContainer,
-              padding: mobile ? 12 : 24,
+              padding: 0,
               borderRadius: mobile ? '8px' : '12px',
               boxShadow: `0 8px 24px ${alphaColor(token.colorText, 0.08)}`,
               height: '100%',
               overflow: 'hidden',
               display: 'flex',
-              flexDirection: 'column'
+              flexDirection: 'row'
             }}>
-              <Outlet />
+              <div style={{
+                flex: 1,
+                minWidth: 0,
+                height: '100%',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                padding: mobile ? 12 : 24,
+              }}>
+                <Outlet />
+              </div>
+              {projectId && (
+                <ProjectAgentPanel
+                  projectId={projectId}
+                  mobile={mobile}
+                  mobileOpen={agentDrawerVisible}
+                  onMobileClose={() => setAgentDrawerVisible(false)}
+                  onExpandedChange={handleAgentLayoutChange}
+                />
+              )}
             </div>
           </Content>
         </Layout>
       </Layout>
 
       {/* 悬浮任务框 */}
-      {projectId && <FloatingTaskPanel projectId={projectId} />}
+      {projectId && (
+        <FloatingTaskPanel
+          projectId={projectId}
+          rightOffset={mobile ? 23 : (agentLayout.expanded ? agentLayout.width + 35 : 70)}
+        />
+      )}
     </Layout>
   );
 }

@@ -70,7 +70,7 @@ services:
       
       # 应用配置
       - APP_NAME=${APP_NAME:-MuMuAINovel}
-      - APP_VERSION=${APP_VERSION:-1.0.0}
+      - APP_VERSION=${APP_VERSION:-1.5.8}
       - APP_HOST=${APP_HOST:-0.0.0.0}
       - APP_PORT=8000
       - DEBUG=${DEBUG:-false}
@@ -107,6 +107,8 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
       - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
       - DEFAULT_MAX_TOKENS=${DEFAULT_MAX_TOKENS:-32000}
+      - ALLOW_PRIVATE_AI_ENDPOINTS=${ALLOW_PRIVATE_AI_ENDPOINTS:-false}
+      - ALLOWED_AI_HOSTS=${ALLOWED_AI_HOSTS:-}
       
       # LinuxDO OAuth 配置
       - LINUXDO_CLIENT_ID=${LINUXDO_CLIENT_ID:-11111}

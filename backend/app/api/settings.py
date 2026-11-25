@@ -27,7 +27,7 @@ from app.logger import get_logger, safe_preview
 from app.config import settings as app_settings, PROJECT_ROOT
 from app.services.ai_service import AIService, create_user_ai_service, create_user_ai_service_with_mcp, normalize_provider
 from app.services.email_service import email_service
-from app.security import validate_public_http_url
+from app.security import validate_ai_http_url
 
 logger = get_logger(__name__)
 
@@ -268,6 +268,7 @@ async def get_user_ai_service(
         db_session=db,                 # ✅ 传递 db_session
         system_prompt=settings.system_prompt,
         enable_mcp=enable_mcp,         # 根据MCP插件状态动态决定
+        disable_thinking=bool(getattr(settings, 'disable_thinking', False)),
     )
 
 
@@ -333,6 +334,7 @@ async def get_user_ai_service_from_db_by_usage(
         db_session=db,
         system_prompt=settings.system_prompt,
         enable_mcp=enable_mcp,
+        disable_thinking=bool(getattr(settings, 'disable_thinking', False)),
     )
 
 
@@ -648,7 +650,7 @@ async def get_available_models(
         resolved_config = resolve_runtime_ai_config(raw_provider, api_key, api_base_url)
         provider = resolved_config["api_provider"]
         api_key = resolved_config["api_key"]
-        api_base_url = validate_public_http_url(resolved_config["api_base_url"])
+        api_base_url = validate_ai_http_url(resolved_config["api_base_url"])
         async with httpx.AsyncClient(timeout=10.0) as client:
             if provider == "openai" or provider == "azure" or provider == "custom":
                 # OpenAI 兼容接口获取模型列表

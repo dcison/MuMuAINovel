@@ -106,8 +106,6 @@ dmypy.json
 
 #build
 BUILD_GUIDE.md
-launcher.py
-launcher.spec
 mumuainovel.md
 logo.ico
 .embed_cache
@@ -127,3 +125,8 @@ backend/embedding/
 backend/.instance_id
 test.json
 tests/
+# Local test suite (kept outside version control)
+backend/tests/
+**/test_*.py
+**/*_test.py
+tool/
